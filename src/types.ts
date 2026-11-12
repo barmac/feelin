@@ -231,7 +231,11 @@ export function equals(a, b, strict = false) {
   }
 
   if (aType === 'range') {
+
+    // a comparison range (`< 10`, `= 10`) never equals an interval
+    // (`(null..10)`, `[10..10]`) or a range of another comparison
     return (
+      a.operator === b.operator &&
       a['start included'] === b['start included'] &&
       a['end included'] === b['end included'] &&
       equals(a.start, b.start) === true &&

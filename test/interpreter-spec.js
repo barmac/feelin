@@ -439,7 +439,75 @@ describe('interpreter', function() {
 
       expr('for x in [ 1, null ], y in [ x + 1 ] return y', [ 2, null ]);
 
-      exprSkip('for i in [2..1] return i', null);
+
+      describe('iteration context', function() {
+
+        expr('for i in 1..0 return i', [ 1, 0 ]);
+        expr('for i in 1..1 return i', [ 1 ]);
+
+        expr('for i in @"1980-01-01"..@"1980-01-03" return i', [
+          date('1980-01-01'),
+          date('1980-01-02'),
+          date('1980-01-03')
+        ]);
+
+        expr('for i in @"1980-01-03"..@"1980-01-01" return i', [
+          date('1980-01-03'),
+          date('1980-01-02'),
+          date('1980-01-01')
+        ]);
+
+        expr('for i in @"1980-02-28"..@"1980-03-01" return i', [
+          date('1980-02-28'),
+          date('1980-02-29'),
+          date('1980-03-01')
+        ]);
+
+        // only integers and dates may be iterated
+        expr('for i in 1..2.5 return i', null);
+        expr('for i in "a".."c" return i', null);
+        expr('for i in @"1980-01-03T00:00:00"..@"1980-01-01T00:00:00" return i', null);
+        expr('for i in @"00:00:00"..@"00:00:00" return i', null);
+        expr('for i in @"P1D"..@"P2D" return i', null);
+        expr('for i in 1..@"1980-01-01" return i', null);
+        expr('for i in null..2 return i', null);
+        expr('for i in 1..null return i', null);
+
+      });
+
+
+      describe('range', function() {
+
+        expr('for i in [1..3] return i', [ 1, 2, 3 ]);
+        expr('for i in [1..3) return i', [ 1, 2 ]);
+        expr('for i in (1..3] return i', [ 2, 3 ]);
+        expr('for i in (1..2) return i', []);
+
+        expr('for i in [@"1980-01-01"..@"1980-01-03") return i', [
+          date('1980-01-01'),
+          date('1980-01-02')
+        ]);
+
+        // a descending interval is invalid
+        expr('for i in [2..1] return i', null);
+
+        // only integer and date intervals may be iterated
+        expr('for i in [1..2.5] return i', null);
+        expr('for i in ["a".."c"] return i', null);
+        expr('for i in [@"1980-01-01T00:00:00"..@"1980-01-03T00:00:00"] return i', null);
+        expr('for i in [@"00:00:00"..@"00:00:00"] return i', null);
+        expr('for i in [@"P1D"..@"P2D"] return i', null);
+
+        // a range needs two bounds to be iterated
+        expr('for i in [1..a] return i', null, { a: null });
+        expr('for i in (> 1) return i', null);
+        expr('for i in (< 1) return i', null);
+        expr('for i in (= 1) return i', null);
+
+        expr('some i in [1..3] satisfies i > 2', true);
+        expr('every i in [1..3] satisfies i > 2', false);
+
+      });
 
     });
 
@@ -617,6 +685,30 @@ describe('interpreter', function() {
       expr('5 in (> 0, <10)', true);
 
       expr('5 in ([0..10], [5..15])', true);
+
+      // a null bound makes the comparison null; comparison ranges are
+      // unbounded instead
+      expr('5 in (null..10]', null);
+      expr('5 in [1..null)', null);
+      expr('5 in [1..null]', null);
+      expr('5 in [null..10]', null);
+      expr('5 in [a..10]', null, { a: null });
+      expr('5 in (< 10)', true);
+      expr('5 in (<= 10)', true);
+      expr('5 in (> 1)', true);
+      expr('5 in (>= 1)', true);
+      expr('[2..3] in (< 10)', true);
+      expr('[2..3] in [1..null]', null);
+
+      expr('5 in (= 5)', true);
+      expr('5 in (= 6)', false);
+      expr('5 in (!= 5)', false);
+      expr('5 in (!= 6)', true);
+      expr('null in (= 5)', false);
+      expr('null in (!= 5)', true);
+      expr('"a" in (= "a")', true);
+      expr('date("2023-08-10") in (= @"2023-08-10")', true);
+      expr('[1, 2] in (= [1, 2])', true);
 
       expr('0 in (1, 0)', true);
 
@@ -1485,6 +1577,16 @@ describe('interpreter', function() {
 
       expr('(<= 10).end included', true);
       expr('(<= 10).end', 10);
+
+      expr('(=10).start included', true);
+      expr('(=10).start', 10);
+      expr('(=10).end', 10);
+      expr('(=10).end included', true);
+
+      expr('(!=10).start included', false);
+      expr('(!=10).start', 10);
+      expr('(!=10).end', 10);
+      expr('(!=10).end included', false);
     });
 
 
@@ -1577,20 +1679,30 @@ describe('interpreter', function() {
     expr('@"23:00:50" = @"23:00:50"', true);
     expr('@"23:00:50z" = @"23:00:50Z"', true);
 
-    expr('(> 5) = (5 .. null_value]', true, { null_value: null });
+    // a comparison range is unbounded, unlike an interval with a null bound
+    expr('(> 5) = (5 .. null_value]', false, { null_value: null });
 
-    expr('(>= 5) = [5 .. null_value]', true, { null_value: null });
+    expr('(>= 5) = [5 .. null_value]', false, { null_value: null });
 
     expr('(5..10) = ]5 .. 10[', true);
 
-    exprSkip('(< 10) = (null..10)', false);
-    exprSkip('(<= 10) = (null..10]', false);
-    exprSkip('(> 10) = (10..null)', false);
-    exprSkip('(>= 10) = [10..null)', false);
+    expr('(< 10) = (null..10)', false);
+    expr('(<= 10) = (null..10]', false);
+    expr('(> 10) = (10..null)', false);
+    expr('(>= 10) = [10..null)', false);
 
-    exprSkip('(=10) = [10..10]', false);
-    exprSkip('(=10) = (=10)', true);
-    exprSkip('(!=10) = (!=10)', true);
+    expr('(< 10) = (< 10)', true);
+    expr('(<= 10) = (<= 10)', true);
+    expr('(> 10) = (> 10)', true);
+    expr('(>= 10) = (>= 10)', true);
+    expr('(< 10) = (<= 10)', false);
+    expr('(< 10) = (< 11)', false);
+
+    expr('(=10) = [10..10]', false);
+    expr('(=10) = (=10)', true);
+    expr('(!=10) = (!=10)', true);
+    expr('(=10) = (!=10)', false);
+    expr('(=10) = (=11)', false);
 
   });
 
