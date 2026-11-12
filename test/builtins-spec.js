@@ -617,6 +617,21 @@ function describeBuiltins(name, evaluate) {
       expr('is(@"23:00:50@Australia/Melbourne", @"23:00:50@Australia/Sydney")', false);
       expr('is(@"20:00:50+00:00", @"21:00:50+01:00")', false);
 
+      // years and months durations and days and time durations are distinct
+      // FEEL types, even when both are zero (per DMN TCK 0103-feel-is-function,
+      // decision zero_duration_001)
+      expr('is(@"P0Y", @"P0D")', false);
+      expr('is(@"P0M", @"PT0S")', false);
+      expr('is(duration("P0Y"), duration("PT0H"))', false);
+      expr('is(@"P1Y", @"P365D")', false);
+      expr('is(@"P0Y", @"P0M")', true);
+      expr('is(@"P0D", @"PT0S")', true);
+      expr('is(@"P1Y", @"P12M")', true);
+      expr('is(@"P1D", @"PT24H")', true);
+      expr('is(@"P1Y", @"P13M")', false);
+      expr('is(@"P1D", @"PT25H")', false);
+      expr('@"P0Y" = @"P0D"', true);
+
       expr(`
         years and months duration(
           from:date("2016-01-21"),

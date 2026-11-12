@@ -863,6 +863,17 @@ const builtins = {
       return false;
     }
 
+    // `years and months duration` and `days and time duration` are distinct
+    // FEEL types; a value of one is never the same as a value of the other,
+    // even if both are zero
+    if (
+      isDuration(value1) &&
+      isDuration(value2) &&
+      value1.yearsMonths !== value2.yearsMonths
+    ) {
+      return false;
+    }
+
     return equals(value1, value2, true);
   }, [ 'any?', 'any?' ], [ 'value1', 'value2' ]),
 
