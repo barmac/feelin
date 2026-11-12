@@ -203,6 +203,93 @@ function describeBuiltins(name, evaluate) {
           to:date and time("2015-01-21T10:20:00")
         ) = duration("-P1Y")
       `, true);
+
+
+      describe('range', function() {
+
+        expr('2 in range("[1..3]")', true);
+        expr('4 in range("[1..3]")', false);
+        expr('range("[1..3]") = [1..3]', true);
+        expr('range(from: "[1..3]") = [1..3]', true);
+        expr('range(" [ 1 .. 3 ] ") = [1..3]', true);
+        expr('range("[-2..-1]") = [-2..-1]', true);
+        expr('range("[1.5..3]") = [1.5..3]', true);
+        expr('range("[1..1]") = [1..1]', true);
+
+        // brackets
+        expr('range("(18..21]") = (18..21]', true);
+        expr('range("]18..21]") = ]18..21]', true);
+        expr('range("[18..21)") = [18..21)', true);
+        expr('range("[18..21[") = [18..21[', true);
+
+        // literal end points
+        expr(String.raw`range("[\"a\"..\"c\"]") = ["a".."c"]`, true);
+        expr(String.raw`range("[@\"1970-01-01\"..@\"1970-01-02\"]") = [@"1970-01-01"..@"1970-01-02"]`, true);
+        expr(String.raw`range("[@\"00:00:00\"..@\"00:00:00\"]") = [@"00:00:00"..@"00:00:00"]`, true);
+        expr(String.raw`range("[@\"1970-01-01T00:00:00\"..@\"1970-01-02T00:00:00\"]") = [@"1970-01-01T00:00:00"..@"1970-01-02T00:00:00"]`, true);
+        expr(String.raw`range("[@\"P1D\"..@\"P2D\"]") = [@"P1D"..@"P2D"]`, true);
+        expr(String.raw`range("[@\"P1Y\"..@\"P2Y\"]") = [@"P1Y"..@"P2Y"]`, true);
+        expr(String.raw`range("[date(\"1970-01-01\")..date(\"1970-01-02\")]") = [date("1970-01-01")..date("1970-01-02")]`, true);
+        expr(String.raw`range("[time(\"00:00:00\")..@\"00:00:00\"]") = [@"00:00:00"..@"00:00:00"]`, true);
+        expr(String.raw`range("[date and time(\"1970-01-01T00:00:00\")..@\"1970-01-02T00:00:00\"]") = [@"1970-01-01T00:00:00"..@"1970-01-02T00:00:00"]`, true);
+        expr(String.raw`range("[duration(\"P1D\")..@\"P2D\"]") = [@"P1D"..@"P2D"]`, true);
+        expr('range("[null..2]").end', 2);
+        expr('range("[1..null]").start', 1);
+
+        // open end points
+        expr('range("[..2]")', null);
+        expr('range("[1..]")', null);
+        expr('range("[null..null]")', null);
+
+        // non-literal end points
+        expr('range("[x..3]")', null, { x: 1 });
+        expr('range("[1+1..3]")', null);
+        expr(String.raw`range("[date(string(\"1970-01-01\"))..date(\"1970-01-02\")]")`, null);
+        expr(String.raw`range("[date(x)..date(\"1970-01-02\")]")`, null, { x: '1970-01-01' });
+        expr(String.raw`range("[date(from: \"1970-01-01\")..date(\"1970-01-02\")]")`, null);
+        expr(String.raw`range("[date and time(string(\"1970-01-01T00:00:00\"))..@\"1970-01-02T00:00:00\"]")`, null);
+        expr(String.raw`range("[time(string(\"00:00:00\"))..@\"00:00:00\"]")`, null);
+        expr(String.raw`range("[duration(string(\"P1D\"))..@\"P2D\"]")`, null);
+
+        // invalid literal end points
+        expr(String.raw`range("[date(\"foo\")..date(\"1970-01-02\")]")`, null);
+        expr(String.raw`range("[@\"foo\"..@\"P2D\"]")`, null);
+
+        // mixed end point types
+        expr(String.raw`range("[1..\"b\"]")`, null);
+        expr(String.raw`range("[@\"1970-01-01\"..@\"1970-01-02T00:00:00\"]")`, null);
+        expr(String.raw`range("[@\"1970-01-01T00:00:00\"..@\"1970-01-02\"]")`, null);
+        expr(String.raw`range("[@\"P1D\"..@\"P2Y\"]")`, null);
+
+        // descending end points
+        expr('range("[3..1]")', null);
+        expr(String.raw`range("[\"z\"..\"a\"]")`, null);
+        expr(String.raw`range("[@\"1970-01-02\"..@\"1970-01-01\"]")`, null);
+        expr(String.raw`range("[@\"1970-01-02T00:00:00\"..@\"1970-01-01T00:00:00\"]")`, null);
+        expr(String.raw`range("[@\"02:00:00\"..@\"01:00:00\"]")`, null);
+        expr(String.raw`range("[@\"P2D\"..@\"P1D\"]")`, null);
+        expr(String.raw`range("[@\"P2Y\"..@\"P1Y\"]")`, null);
+
+        // not an interval
+        expr('range("")', null);
+        expr('range(" ")', null);
+        expr('range(string(""))', null);
+        expr('range(">=10")', null);
+        expr('range("<10")', null);
+        expr('range("1")', null);
+        expr('range("1..3")', null);
+        expr('range("[1..3")', null);
+        expr('range("[1..3] + 1")', null);
+        expr('range("[1, 2, 3]")', null);
+
+        // invalid arguments
+        expr('range()', null);
+        expr('range(null)', null);
+        expr('range(1)', null);
+        expr('range([1..3])', null);
+        expr('range("[1..3]", "foo")', null);
+        expr('range(fron: "[1..3]")', null);
+      });
     });
 
 

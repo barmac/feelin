@@ -15,8 +15,16 @@ import {
 import {
   before,
   meets,
-  includes as includesRange
+  includes as includesRange,
+  isRange,
+  FeelRange
 } from './range.js';
+
+import { SyntaxNode } from '@lezer/common';
+
+import { parseExpression } from './parser.js';
+
+import { evaluate } from './interpreter.js';
 
 import {
   invalidArguments,
@@ -61,6 +69,7 @@ const names = [
   'string',
   'duration',
   'years and months duration',
+  'range',
 
   // 10.3.4.2 Boolean function
   'not',
@@ -347,6 +356,18 @@ const builtins = {
   'years and months duration': fn(function(from, to) {
     return yearsAndMonthsDuration(from, to);
   }, [ 'date', 'date' ], [ 'from', 'to' ]),
+
+  // range(from) => range literal string, e.g. "[1..10)"
+  'range': fn(function(from) {
+
+    const range = parseRangeLiteral(from);
+
+    if (!range) {
+      return invalidArguments('range({from}) is not a valid range literal', { from });
+    }
+
+    return range;
+  }, [ 'string' ], [ 'from' ]),
 
   '@': fn(function(string) {
 
@@ -1061,6 +1082,121 @@ function contextPut(context, keys, value) {
     ...context,
     [key]: value
   };
+}
+
+const LITERAL_NODES = new Set([ 'NumericLiteral', 'StringLiteral', 'null' ]);
+
+/**
+ * Parse a range literal, as accepted by `range(from)`: an interval such as
+ * `[1..10)` or `]@"2020-01-01"..date("2020-12-31")]` whose end points are
+ * literals of the same type, in ascending order and not both `null`.
+ *
+ * @param {string} from
+ *
+ * @return {FeelRange | null}
+ */
+function parseRangeLiteral(from: string) : FeelRange | null {
+
+  const [ test, ...rest ] = childNodes(parseExpression(from, {}, undefined).topNode);
+
+  const [ interval, ...testRest ] = test?.name === 'SimplePositiveUnaryTest' ? childNodes(test) : [];
+
+  if (rest.length || testRest.length || interval?.name !== 'Interval') {
+    return null;
+  }
+
+  const [ , startNode, , endNode ] = childNodes(interval);
+
+  if (!isLiteral(startNode) || !isLiteral(endNode)) {
+    return null;
+  }
+
+  let result;
+
+  try {
+    result = evaluate(from);
+  } catch {
+
+    // syntax errors, end points of unsupported or different types
+    return null;
+  }
+
+  const {
+    value: range,
+    warnings
+  } = result;
+
+  // end points must evaluate cleanly, rejecting i.e. date("foo")
+  if (warnings.length || !isRange(range)) {
+    return null;
+  }
+
+  const { start, end } = range;
+
+  if (start === null && end === null) {
+    return null;
+  }
+
+  if (start !== null && end !== null && !(isSameRangeType(start, end) && !before(end, start))) {
+    return null;
+  }
+
+  return range;
+}
+
+/**
+ * Whether the node is a literal: a number, a string, `null` or a temporal
+ * literal, i.e. `@"..."` or `date("...")`, `time("...")`,
+ * `date and time("...")` and `duration("...")` with a string literal.
+ */
+function isLiteral(node: SyntaxNode | undefined) : boolean {
+
+  if (!node) {
+    return false;
+  }
+
+  if (LITERAL_NODES.has(node.name)) {
+    return true;
+  }
+
+  if (node.name !== 'DateTimeLiteral') {
+    return false;
+  }
+
+  // AtLiteral | DateTimeConstructor "(" PositionalParameters ")"
+  const [ first, , parameters ] = childNodes(node);
+
+  if (first.name === 'AtLiteral') {
+    return true;
+  }
+
+  const args = parameters?.name === 'PositionalParameters' ? childNodes(parameters) : [];
+
+  return args.length === 1 && args[0].name === 'StringLiteral';
+}
+
+/**
+ * Child nodes of a syntax node, ignoring skipped nodes (comments).
+ */
+function childNodes(node: SyntaxNode) : SyntaxNode[] {
+
+  const children = [];
+
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (!child.type.isSkipped) {
+      children.push(child);
+    }
+  }
+
+  return children;
+}
+
+/**
+ * Whether two non-null values are of the same FEEL type, telling apart
+ * days and time from years and months durations.
+ */
+function isSameRangeType(a, b) : boolean {
+  return getType(a) === getType(b) && (!isDuration(a) || a.yearsMonths === b.yearsMonths);
 }
 
 function matches(a, b) {
