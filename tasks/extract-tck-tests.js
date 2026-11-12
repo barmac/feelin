@@ -27,6 +27,10 @@ const tests = glob.sync('TestCases/*/*-feel-*/*.xml', { cwd: tckLocation });
 
 const FILTER = process.env.FILTER || null;
 
+// key that a boxed context's result entry (one without a variable) is
+// extracted to, e.g. `{ a: 1, __result: a + 1 }.__result`
+const CONTEXT_RESULT = '__result';
+
 for (const testGlob of tests) {
 
   const testPath = path.join(tckLocation, testGlob);
@@ -160,6 +164,11 @@ function parseModelFile(file) {
 
       if (el.name === 'dmn:context') {
         stack.current.text += ' }';
+
+        // a boxed context with a result entry evaluates to that entry
+        if (stack.current.contextResult) {
+          stack.current.text += `.${ CONTEXT_RESULT }`;
+        }
       }
 
       if (el.name === 'dmn:contextEntry') {
@@ -169,7 +178,11 @@ function parseModelFile(file) {
           stack.current.text += ', ';
         }
 
-        stack.current.text += `${ contextEntry.name || '""'}: ${ contextEntry.text }`;
+        if (!contextEntry.name) {
+          stack.current.contextResult = true;
+        }
+
+        stack.current.text += `${ contextEntry.name || CONTEXT_RESULT }: ${ contextEntry.text }`;
       }
 
       if (el.name === 'dmn:decision') {

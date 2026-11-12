@@ -11,7 +11,8 @@ import {
   isDuration,
   isNumber,
   isContext,
-  isBoolean
+  isBoolean,
+  isNil
 } from './types.js';
 
 import {
@@ -20,6 +21,7 @@ import {
 } from './range.js';
 
 import {
+  InvocationFailure,
   isInvocationFailure,
   wrapFunction
 } from './function.js';
@@ -38,7 +40,10 @@ import {
   addDuration,
   subtractTemporals,
   addDurations,
-  toFeel
+  toFeel,
+  isDate,
+  combine,
+  timeOfDate
 } from './temporal.js';
 
 
@@ -535,12 +540,30 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
   case 'FormalParameters': return args;
 
-  case 'FormalParameter': return args[0];
+  case 'FormalParameter': {
+
+    const [ name, type ] = args;
+
+    if (!isTypeDescriptor(type)) {
+      return { name, type: null };
+    }
+
+    const input = node.input;
+
+    return {
+      name,
+      type,
+      typeName: normalizeTypeName(input.slice(input.indexOf(':') + 1)),
+      checked: isKnownType(type)
+    };
+  }
 
   case 'ParameterName': return args.join(' ');
 
   case 'FunctionDefinition': return (context) => {
-    const parameterNames = args[2];
+    const parameters = args[2];
+
+    const parameterNames = parameters.map(parameter => parameter.name);
 
     const external = args[4] === 'external';
 
@@ -555,18 +578,32 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
     const fnBody = args[external ? 5 : 4];
 
-    return wrapFunction((...args) => {
+    const fn = wrapFunction((...args) => {
 
-      const fnContext = parameterNames.reduce((context, name, idx) => {
+      const fnContext = { ...context };
+
+      for (let idx = 0; idx < parameters.length; idx++) {
+
+        const parameter = parameters[idx];
 
         // support positional parameters
-        context[name] = args[idx];
+        const value = bindArgument(args[idx], parameter, context);
 
-        return context;
-      }, { ...context });
+        if (value === NON_CONFORMING) {
+          return new InvocationFailure(
+            'FUNCTION_INVOCATION_FAILURE',
+            `Cannot invoke {target}: parameter '${ parameter.name }' of type '${ parameter.typeName }' does not accept {value}`,
+            { target: fn, value: args[idx] }
+          );
+        }
+
+        fnContext[parameter.name] = value;
+      }
 
       return fnBody(fnContext);
     }, parameterNames);
+
+    return fn;
   };
 
   case 'ContextEntry': return (context) => {
@@ -1501,6 +1538,94 @@ function matchesType(value, descriptor, context) : boolean {
   }
 
   return false;
+}
+
+
+// typed function parameters ////////////////////////////////////////
+
+/**
+ * Signal returned by {@link bindArgument} for an argument that does not
+ * conform to the parameter type.
+ */
+const NON_CONFORMING = {};
+
+/**
+ * Whether a type descriptor refers to built-in FEEL types only, so that
+ * {@link matchesType} can decide conformance. Other names (DMN item
+ * definitions, for instance) are unknown to the interpreter.
+ */
+function isKnownType(descriptor) : boolean {
+
+  if (!isTypeDescriptor(descriptor)) {
+    return false;
+  }
+
+  switch (descriptor.kind) {
+  case 'name':
+    return has(NAMED_TYPE_CHECKS, descriptor.name);
+  case 'list':
+    return isKnownType(descriptor.element);
+  case 'context':
+    return descriptor.entries.every(({ type }) => isKnownType(type));
+  case 'function':
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Bind an argument to a function parameter, checking it against the
+ * declared type and applying the DMN implicit conversions (to singleton
+ * list, from singleton list, from date to date and time).
+ *
+ * `null` conforms to every type. A parameter type that refers to unknown
+ * names is not checked, apart from wrapping a single value passed to a
+ * `list<T>` parameter.
+ *
+ * @return the value to bind, or {@link NON_CONFORMING}
+ */
+function bindArgument(value, parameter, context) {
+
+  const { type, checked } = parameter;
+
+  if (!type || isNil(value)) {
+    return value;
+  }
+
+  const isList = type.kind === 'list';
+
+  if (!checked) {
+
+    // to singleton list
+    return isList && !isArray(value) ? [ value ] : value;
+  }
+
+  if (matchesType(value, type, context)) {
+    return value;
+  }
+
+  // to singleton list
+  if (isList && matchesType(value, type.element, context)) {
+    return [ value ];
+  }
+
+  // from singleton list
+  if (isArray(value) && value.length === 1) {
+
+    const [ element ] = value;
+
+    if (isNil(element) || matchesType(element, type, context)) {
+      return element;
+    }
+  }
+
+  // from date to date and time
+  if (isDate(value) && type.kind === 'name' && type.name === 'date and time') {
+    return combine(value, timeOfDate(value));
+  }
+
+  return NON_CONFORMING;
 }
 
 function parseString(str: string) {
