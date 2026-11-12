@@ -18,11 +18,11 @@ const TEMPORAL_INSTANT_TYPES = new Set([ 'date', 'time', 'date time' ]);
  * non-enumerable {@link FeelRange#valueType} that records the FEEL type of
  * its elements (e.g. `number`, `date`). All behavior — membership
  * ({@link FeelRange#includes}), iteration ({@link FeelRange#map}) and the
- * range relation functions ({@link before}, {@link meets},
- * {@link includes}) — is derived from that data through a single
- * comparator ({@link cmp}). Because the comparator routes temporal values
- * through {@link toComparable}, ranges of dates, times and durations
- * compare correctly, just like ranges of numbers and strings.
+ * range relations ({@link rangeRelations}) — is derived from that data
+ * through a single comparator ({@link cmp}). Because the comparator
+ * routes temporal values through {@link toComparable}, ranges of dates,
+ * times and durations compare correctly, just like ranges of numbers and
+ * strings.
  */
 
 /**
@@ -226,59 +226,296 @@ function rangeIncludesRange(container: FeelRange, value: FeelRange) : boolean {
 }
 
 
-// relations (used by built-in range functions) //////////////////////
+// relations (DMN 1.5, 10.3.4.9, Table 78) ///////////////////////////
+
+type Ternary = boolean | null;
 
 /**
- * Whether `a` is (entirely) before `b`. Both operands may be a point or
- * a {@link FeelRange}.
+ * A relation between points and / or ranges, implemented for the
+ * argument combinations it is defined for: point / point (`pp`),
+ * point / range (`pr`), range / point (`rp`) and range / range (`rr`).
  */
-export function before(a: RangeValue, b: RangeValue) : boolean {
+export type RangeRelation = {
+  pp?: (point1: RangeValue, point2: RangeValue) => Ternary;
+  pr?: (point: RangeValue, range: FeelRange) => Ternary;
+  rp?: (range: FeelRange, point: RangeValue) => Ternary;
+  rr?: (range1: FeelRange, range2: FeelRange) => Ternary;
+};
 
-  if (a instanceof FeelRange && b instanceof FeelRange) {
-    const c = cmp(a.end, b.start);
+/**
+ * The endpoint of an unbounded range side, ordered before (`-1`) or
+ * after (`1`) every other value.
+ */
+type Infinite = { readonly infinity: -1 | 1 };
 
-    return c < 0 || (
-      c === 0 && (!a['end included'] || !b['start included'])
-    );
-  }
+const NEGATIVE_INFINITY: Infinite = { infinity: -1 };
+const POSITIVE_INFINITY: Infinite = { infinity: 1 };
 
-  if (a instanceof FeelRange) {
-    const c = cmp(a.end, b);
-
-    return c < 0 || (c === 0 && !a['end included']);
-  }
-
-  if (b instanceof FeelRange) {
-    const c = cmp(b.start, a);
-
-    return c > 0 || (c === 0 && !b['start included']);
-  }
-
-  return cmp(a, b) < 0;
+function isInfinite(value: RangeValue) : value is Infinite {
+  return value === NEGATIVE_INFINITY || value === POSITIVE_INFINITY;
 }
 
 /**
- * Whether range `a` meets range `b`, i.e. `a` ends exactly where `b`
- * starts, both inclusive.
+ * The start of the range; negative infinity if the range is unbounded
+ * to the left (e.g. `< 10`).
  */
-export function meets(a: FeelRange, b: FeelRange) : boolean {
-  return (
-    cmp(a.end, b.start) === 0 &&
-    a['end included'] === true &&
-    b['start included'] === true
+function lower(range: FeelRange) : RangeValue {
+  return range.start === null ? NEGATIVE_INFINITY : range.start;
+}
+
+/**
+ * The end of the range; positive infinity if the range is unbounded
+ * to the right (e.g. `> 10`).
+ */
+function upper(range: FeelRange) : RangeValue {
+  return range.end === null ? POSITIVE_INFINITY : range.end;
+}
+
+/**
+ * Whether the range includes its start; an unbounded side never
+ * includes its (infinite) endpoint.
+ */
+function si(range: FeelRange) : boolean {
+  return range.start !== null && range['start included'];
+}
+
+/**
+ * Whether the range includes its end; an unbounded side never includes
+ * its (infinite) endpoint.
+ */
+function ei(range: FeelRange) : boolean {
+  return range.end !== null && range['end included'];
+}
+
+/**
+ * Compare two points or range endpoints. Returns `-1`, `0` or `1`, or
+ * `null` if the values are not comparable (`null`, or of different or
+ * unordered types).
+ */
+function compare(a: RangeValue, b: RangeValue) : number | null {
+
+  if (isInfinite(a) || isInfinite(b)) {
+    const ia = isInfinite(a) ? a.infinity : 0;
+    const ib = isInfinite(b) ? b.infinity : 0;
+
+    return ia === ib ? 0 : ia < ib ? -1 : 1;
+  }
+
+  if (a === null || b === null) {
+    return null;
+  }
+
+  const type = getType(a);
+
+  if (type !== getType(b) || !RANGE_TYPES.has(type)) {
+    return null;
+  }
+
+  return cmp(a, b);
+}
+
+function lt(a: RangeValue, b: RangeValue) : Ternary {
+  const c = compare(a, b);
+
+  return c === null ? null : c < 0;
+}
+
+function gt(a: RangeValue, b: RangeValue) : Ternary {
+  const c = compare(a, b);
+
+  return c === null ? null : c > 0;
+}
+
+function eq(a: RangeValue, b: RangeValue) : Ternary {
+  const c = compare(a, b);
+
+  return c === null ? null : c === 0;
+}
+
+/**
+ * Three-valued conjunction: `false` wins over `null` (unknown).
+ */
+function and(...values: Ternary[]) : Ternary {
+  return values.includes(false) ? false : values.includes(null) ? null : true;
+}
+
+/**
+ * Three-valued disjunction: `true` wins over `null` (unknown).
+ */
+function or(...values: Ternary[]) : Ternary {
+  return values.includes(true) ? true : values.includes(null) ? null : false;
+}
+
+/**
+ * The relation with swapped arguments, e.g. `after` from `before`.
+ */
+function inverse(relation: RangeRelation) : RangeRelation {
+
+  const { pp, pr, rp, rr } = relation;
+
+  return {
+    pp: pp && ((point1, point2) => pp(point2, point1)),
+    pr: rp && ((point, range) => rp(range, point)),
+    rp: pr && ((range, point) => pr(point, range)),
+    rr: rr && ((range1, range2) => rr(range2, range1))
+  };
+}
+
+const before: RangeRelation = {
+  pp: (p1, p2) => lt(p1, p2),
+  pr: (p, r) => or(
+    lt(p, lower(r)),
+    and(eq(p, lower(r)), !si(r))
+  ),
+  rp: (r, p) => or(
+    lt(upper(r), p),
+    and(eq(upper(r), p), !ei(r))
+  ),
+  rr: (r1, r2) => or(
+    lt(upper(r1), lower(r2)),
+    and(eq(upper(r1), lower(r2)), !ei(r1) || !si(r2))
+  )
+};
+
+const meets: RangeRelation = {
+  rr: (r1, r2) => and(ei(r1), si(r2), eq(upper(r1), lower(r2)))
+};
+
+const overlaps: RangeRelation = {
+  rr: (r1, r2) => and(
+    or(
+      gt(upper(r1), lower(r2)),
+      and(eq(upper(r1), lower(r2)), ei(r1), si(r2))
+    ),
+    or(
+      lt(lower(r1), upper(r2)),
+      and(eq(lower(r1), upper(r2)), si(r1), ei(r2))
+    )
+  )
+};
+
+const overlapsBefore: RangeRelation = {
+  rr: (r1, r2) => and(
+    or(
+      lt(lower(r1), lower(r2)),
+      and(eq(lower(r1), lower(r2)), si(r1), !si(r2))
+    ),
+    or(
+      gt(upper(r1), lower(r2)),
+      and(eq(upper(r1), lower(r2)), ei(r1), si(r2))
+    ),
+    or(
+      lt(upper(r1), upper(r2)),
+      and(eq(upper(r1), upper(r2)), !ei(r1) || ei(r2))
+    )
+  )
+};
+
+const finishes: RangeRelation = {
+  pr: (p, r) => and(ei(r), eq(upper(r), p)),
+  rr: (r1, r2) => and(
+    ei(r1) === ei(r2),
+    eq(upper(r1), upper(r2)),
+    or(
+      gt(lower(r1), lower(r2)),
+      and(eq(lower(r1), lower(r2)), !si(r1) || si(r2))
+    )
+  )
+};
+
+const includes: RangeRelation = {
+  rp: (r, p) => or(
+    and(lt(lower(r), p), gt(upper(r), p)),
+    and(eq(lower(r), p), si(r)),
+    and(eq(upper(r), p), ei(r))
+  ),
+  rr: (r1, r2) => and(
+    or(
+      lt(lower(r1), lower(r2)),
+      and(eq(lower(r1), lower(r2)), si(r1) || !si(r2))
+    ),
+    or(
+      gt(upper(r1), upper(r2)),
+      and(eq(upper(r1), upper(r2)), ei(r1) || !ei(r2))
+    )
+  )
+};
+
+const starts: RangeRelation = {
+  pr: (p, r) => and(eq(lower(r), p), si(r)),
+  rr: (r1, r2) => and(
+    eq(lower(r1), lower(r2)),
+    si(r1) === si(r2),
+    or(
+      lt(upper(r1), upper(r2)),
+      and(eq(upper(r1), upper(r2)), !ei(r1) || ei(r2))
+    )
+  )
+};
+
+const coincides: RangeRelation = {
+  pp: (p1, p2) => eq(p1, p2),
+  rr: (r1, r2) => and(
+    eq(lower(r1), lower(r2)),
+    si(r1) === si(r2),
+    eq(upper(r1), upper(r2)),
+    ei(r1) === ei(r2)
+  )
+};
+
+/**
+ * The range relations of the built-in range functions, by name. Inverse
+ * relations (e.g. `after`, `met by`) are defined in Table 78 exactly as
+ * their counterparts with swapped arguments.
+ */
+export const rangeRelations: Record<string, RangeRelation> = {
+  'before': before,
+  'after': inverse(before),
+  'meets': meets,
+  'met by': inverse(meets),
+  'overlaps': overlaps,
+  'overlaps before': overlapsBefore,
+  'overlaps after': inverse(overlapsBefore),
+  'finishes': finishes,
+  'finished by': inverse(finishes),
+  'includes': includes,
+  'during': inverse(includes),
+  'starts': starts,
+  'started by': inverse(starts),
+  'coincides': coincides
+};
+
+/**
+ * Apply a relation to two (non-null) points and / or ranges. Returns
+ * `undefined` if the relation is not defined for the given combination
+ * of points and ranges, and `null` if the result is unknown (e.g. for
+ * values that are not comparable).
+ */
+export function relate(relation: RangeRelation, a: RangeValue, b: RangeValue) : Ternary | undefined {
+
+  const aRange = isRange(a);
+  const bRange = isRange(b);
+
+  const impl: (a: RangeValue, b: RangeValue) => Ternary = (
+    aRange
+      ? (bRange ? relation.rr : relation.rp)
+      : (bRange ? relation.pr : relation.pp)
   );
-}
 
-/**
- * Whether `range` includes the given point or range.
- */
-export function includes(range: FeelRange, value: RangeValue) : boolean | null {
-
-  if (!(range instanceof FeelRange)) {
-    return false;
+  if (!impl) {
+    return undefined;
   }
 
-  return rangeIncludes(range, value);
+  // the empty range (without any bounds) relates to nothing
+  if (aRange && isEmpty(a) || bRange && isEmpty(b)) {
+    return null;
+  }
+
+  return impl(a, b);
+}
+
+function isEmpty(range: FeelRange) : boolean {
+  return range.start === null && range.end === null;
 }
 
 

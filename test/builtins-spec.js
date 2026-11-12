@@ -883,6 +883,250 @@ function describeBuiltins(name, evaluate) {
       expr('includes( [1..a], 11 )', true, { a: 11 });
       expr('includes( [1..a], 11 )', false, { a: 10 });
 
+      // DMN 1.5, 10.3.4.9, Table 78: every point / range signature, by
+      // position and by name; unbounded ranges; three-valued results
+
+      // before
+      expr('before( 1, 1 )', false);
+      expr('before( "a", "b" )', true);
+      expr('before( date("2020-01-01"), date("2020-06-01") )', true);
+      expr('before( 1, [1..10] )', false);
+      expr('before( 1, [5..10] )', true);
+      expr('before( [1..10), 10 )', true);
+      expr('before( [1..10], 15 )', true);
+      expr('before( [1..10], [15..20] )', true);
+      expr('before( [1..10], [10..20] )', false);
+      expr('before( [1..10], (10..20] )', true);
+      expr('before( point1: 1, point2: 10 )', true);
+      expr('before( point: 1, range: [5..10] )', true);
+      expr('before( range1: [1..10], range2: [15..20] )', true);
+      expr('before( < 10, 10 )', true);
+      expr('before( <= 10, 10 )', false);
+      expr('before( > 10, 100 )', false);
+      expr('before( 5, > 5 )', true);
+      expr('before( 5, >= 5 )', false);
+      expr('before( < 10, [10..20] )', true);
+      expr('before( < 10, > 20 )', true);
+      expr('before( > 10, < 20 )', false);
+      expr('before( null, 1 )', null);
+      expr('before( 1, null )', null);
+      expr('before( [1..10], null )', null);
+      expr('before( 1, "a" )', null);
+      expr('before( 1, ["a".."z"] )', null);
+      expr('before( 1 )', null);
+      expr('before( 1, 2, 3 )', null);
+      expr('before( point1: 1, range: [5..10] )', null);
+
+      // after
+      expr('after( 10, 5 )', true);
+      expr('after( 5, 10 )', false);
+      expr('after( 12, [1..10] )', true);
+      expr('after( 10, [1..10) )', true);
+      expr('after( 10, [1..10] )', false);
+      expr('after( [11..20], 12 )', false);
+      expr('after( [11..20], 10 )', true);
+      expr('after( (11..20], 11 )', true);
+      expr('after( [11..20], 11 )', false);
+      expr('after( [11..20], [1..10] )', true);
+      expr('after( [1..10], [11..20] )', false);
+      expr('after( [11..20], [1..11) )', true);
+      expr('after( (11..20], [1..11] )', true);
+      expr('after( point1: 10, point2: 5 )', true);
+      expr('after( point: 12, range: [1..10] )', true);
+      expr('after( range1: [11..20], range2: [1..10] )', true);
+      expr('after( > 10, 10 )', true);
+      expr('after( < 10, 5 )', false);
+      expr('after( 15, < 10 )', true);
+      expr('after( 10, <= 10 )', false);
+      expr('after( null, [1..10] )', null);
+
+      // meets
+      expr('meets( [1..5], [5..10] )', true);
+      expr('meets( [1..5], (5..10] )', false);
+      expr('meets( [1..5], [6..10] )', false);
+      expr('meets( range1: [1..5], range2: [5..10] )', true);
+      expr('meets( <= 5, [5..10] )', true);
+      expr('meets( [1..5], >= 5 )', true);
+      expr('meets( < 5, [5..10] )', false);
+      expr('meets( [1..5], 5 )', null);
+      expr('meets( 5, 5 )', null);
+
+      // met by
+      expr('met by( range1: [5..10], range2: [1..5] )', true);
+      expr('met by( >= 5, <= 5 )', true);
+      expr('met by( > 5, <= 5 )', false);
+      expr('met by( 5, [1..5] )', null);
+
+      // overlaps
+      expr('overlaps( range1: [1..5], range2: [3..8] )', true);
+      expr('overlaps( < 10, > 5 )', true);
+      expr('overlaps( < 5, > 5 )', false);
+      expr('overlaps( <= 5, >= 5 )', true);
+      expr('overlaps( < 10, [1..5] )', true);
+      expr('overlaps( > 10, [1..5] )', false);
+      expr('overlaps( [1..5], 3 )', null);
+
+      // overlaps before
+      expr('overlaps before( [1..5], [3..8] )', true);
+      expr('overlaps before( [1..5], [6..8] )', false);
+      expr('overlaps before( [1..5], [5..8] )', true);
+      expr('overlaps before( [1..5], (5..8] )', false);
+      expr('overlaps before( [1..5), [5..8] )', false);
+      expr('overlaps before( [1..5), (1..5] )', true);
+      expr('overlaps before( [1..5], (1..5] )', true);
+      expr('overlaps before( [1..5), [1..5] )', false);
+      expr('overlaps before( [1..5], [1..5] )', false);
+      expr('overlaps before( range1: [1..5], range2: [3..8] )', true);
+      expr('overlaps before( < 5, [3..8] )', true);
+      expr('overlaps before( [1..5], > 3 )', true);
+      expr('overlaps before( > 3, [1..5] )', false);
+      expr('overlaps before( [1..5], 3 )', null);
+
+      // overlaps after
+      expr('overlaps after( [3..8], [1..5] )', true);
+      expr('overlaps after( [6..8], [1..5] )', false);
+      expr('overlaps after( [5..8], [1..5] )', true);
+      expr('overlaps after( (5..8], [1..5] )', false);
+      expr('overlaps after( [5..8], [1..5) )', false);
+      expr('overlaps after( (1..5], [1..5) )', true);
+      expr('overlaps after( (1..5], [1..5] )', true);
+      expr('overlaps after( [1..5], [1..5) )', false);
+      expr('overlaps after( [1..5], [1..5] )', false);
+      expr('overlaps after( range1: [3..8], range2: [1..5] )', true);
+      expr('overlaps after( [3..8], < 5 )', true);
+      expr('overlaps after( > 3, [1..5] )', true);
+      expr('overlaps after( [1..5], > 3 )', false);
+      expr('overlaps after( 3, [1..5] )', null);
+
+      // finishes
+      expr('finishes( 10, [1..10] )', true);
+      expr('finishes( 10, [1..10) )', false);
+      expr('finishes( 5, [1..10] )', false);
+      expr('finishes( [5..10], [1..10] )', true);
+      expr('finishes( [5..10), [1..10] )', false);
+      expr('finishes( [5..10), [1..10) )', true);
+      expr('finishes( [1..10], [1..10] )', true);
+      expr('finishes( (1..10], [1..10] )', true);
+      expr('finishes( [1..10], (1..10] )', false);
+      expr('finishes( point: 10, range: [1..10] )', true);
+      expr('finishes( range1: [5..10], range2: [1..10] )', true);
+      expr('finishes( 10, <= 10 )', true);
+      expr('finishes( 10, < 10 )', false);
+      expr('finishes( [5..10], <= 10 )', true);
+      expr('finishes( <= 10, [1..10] )', false);
+      expr('finishes( [1..10], 10 )', null);
+      expr('finishes( range: [1..10], point: 10 )', true);
+
+      // finished by
+      expr('finished by( [1..10], 10 )', true);
+      expr('finished by( [1..10), 10 )', false);
+      expr('finished by( [1..10], [5..10] )', true);
+      expr('finished by( [1..10], [5..10) )', false);
+      expr('finished by( [1..10), [5..10) )', true);
+      expr('finished by( [1..10], (1..10] )', true);
+      expr('finished by( [1..10], [1..10] )', true);
+      expr('finished by( range: [1..10], point: 10 )', true);
+      expr('finished by( range1: [1..10], range2: [5..10] )', true);
+      expr('finished by( <= 10, 10 )', true);
+      expr('finished by( <= 10, [5..10] )', true);
+      expr('finished by( 10, [1..10] )', null);
+
+      // includes
+      expr('includes( (1..10], 1 )', false);
+      expr('includes( (1..10], (1..5] )', true);
+      expr('includes( [1..10), [5..10) )', true);
+      expr('includes( [1..10], [1..10) )', true);
+      expr('includes( [1..10], (1..10] )', true);
+      expr('includes( range: [1..10], point: 5 )', true);
+      expr('includes( range1: [1..10], range2: [4..6] )', true);
+      expr('includes( < 10, 5 )', true);
+      expr('includes( < 10, 10 )', false);
+      expr('includes( > 5, [6..100] )', true);
+      expr('includes( > 5, > 6 )', true);
+      expr('includes( > 6, > 5 )', false);
+      expr('includes( < 10, > 5 )', false);
+      expr('includes( [1..10], null )', null);
+      expr('includes( [1..10], "a" )', null);
+      expr('includes( 1, 1 )', null);
+
+      // during
+      expr('during( 5, [1..10] )', true);
+      expr('during( 12, [1..10] )', false);
+      expr('during( 1, [1..10] )', true);
+      expr('during( 10, [1..10] )', true);
+      expr('during( 1, (1..10] )', false);
+      expr('during( 10, [1..10) )', false);
+      expr('during( [4..6], [1..10] )', true);
+      expr('during( [1..5], [1..10] )', true);
+      expr('during( (1..5], (1..10] )', true);
+      expr('during( (1..10), [1..10] )', true);
+      expr('during( [5..10), [1..10) )', true);
+      expr('during( [1..10), [1..10] )', true);
+      expr('during( (1..10], [1..10] )', true);
+      expr('during( [1..10], [1..10] )', true);
+      expr('during( [1..10], (1..10] )', false);
+      expr('during( [0..5], [1..10] )', false);
+      expr('during( point: 5, range: [1..10] )', true);
+      expr('during( range1: [4..6], range2: [1..10] )', true);
+      expr('during( 5, < 10 )', true);
+      expr('during( [1..5], < 10 )', true);
+      expr('during( < 5, [1..10] )', false);
+      expr('during( [1..10], 5 )', null);
+
+      // starts
+      expr('starts( 1, [1..10] )', true);
+      expr('starts( 1, (1..10] )', false);
+      expr('starts( 2, [1..10] )', false);
+      expr('starts( [1..5], [1..10] )', true);
+      expr('starts( (1..5], (1..10] )', true);
+      expr('starts( (1..5], [1..10] )', false);
+      expr('starts( [1..5], (1..10] )', false);
+      expr('starts( [1..10], [1..10] )', true);
+      expr('starts( [1..10), [1..10] )', true);
+      expr('starts( (1..10), (1..10) )', true);
+      expr('starts( [1..10], [1..5] )', false);
+      expr('starts( point: 1, range: [1..10] )', true);
+      expr('starts( range1: [1..5], range2: [1..10] )', true);
+      expr('starts( 1, >= 1 )', true);
+      expr('starts( 1, > 1 )', false);
+      expr('starts( < 5, < 10 )', true);
+      expr('starts( [1..10], 1 )', null);
+
+      // started by
+      expr('started by( [1..10], 1 )', true);
+      expr('started by( (1..10], 1 )', false);
+      expr('started by( [1..10], 2 )', false);
+      expr('started by( [1..10], [1..5] )', true);
+      expr('started by( (1..10], (1..5] )', true);
+      expr('started by( [1..10], (1..5] )', false);
+      expr('started by( (1..10], [1..5] )', false);
+      expr('started by( [1..10], [1..10] )', true);
+      expr('started by( [1..10], [1..10) )', true);
+      expr('started by( (1..10), (1..10) )', true);
+      expr('started by( [1..5], [1..10] )', false);
+      expr('started by( range: [1..10], point: 1 )', true);
+      expr('started by( range1: [1..10], range2: [1..5] )', true);
+      expr('started by( >= 1, 1 )', true);
+      expr('started by( < 10, < 5 )', true);
+      expr('started by( 1, [1..10] )', null);
+
+      // coincides
+      expr('coincides( 5, 5 )', true);
+      expr('coincides( 3, 4 )', false);
+      expr('coincides( "a", "a" )', true);
+      expr('coincides( date("2020-01-01"), date("2020-01-01") )', true);
+      expr('coincides( [1..5], [1..5] )', true);
+      expr('coincides( (1..5), [1..5] )', false);
+      expr('coincides( [1..5], [2..6] )', false);
+      expr('coincides( point1: 5, point2: 5 )', true);
+      expr('coincides( range1: [1..5], range2: [1..5] )', true);
+      expr('coincides( < 10, < 10 )', true);
+      expr('coincides( < 10, <= 10 )', false);
+      expr('coincides( > 10, < 10 )', false);
+      expr('coincides( 1, "1" )', null);
+      expr('coincides( null, null )', null);
+      expr('coincides( 5, [5..5] )', null);
+
       // temporal ranges (compared via a category-aware comparator)
       expr('before( [date("2020-01-01")..date("2020-06-01")], [date("2020-07-01")..date("2020-12-01")] )', true);
       expr('before( [date("2020-01-01")..date("2020-08-01")], [date("2020-07-01")..date("2020-12-01")] )', false);
