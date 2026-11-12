@@ -1152,8 +1152,10 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
       const idx = filterFn(context);
 
       if (isBoolean(idx)) {
+
+        // a non-list target is treated as a singleton list
         if (idx === true) {
-          return target;
+          return filterTarget;
         } else {
           return [];
         }
