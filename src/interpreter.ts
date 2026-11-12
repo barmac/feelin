@@ -38,6 +38,10 @@ import {
   addDuration,
   subtractTemporals,
   addDurations,
+  multiplyDuration,
+  divideDuration,
+  divideDurations,
+  negateDuration,
   toFeel
 } from './temporal.js';
 
@@ -259,6 +263,8 @@ const TEMPORAL_TYPES = new Set([ 'date', 'time', 'date time', 'duration' ]);
 
 const NUMBER_ONLY = [ 'number' ];
 
+const NO_TEMPORAL_OP = (_a, _b, _unary) => undefined;
+
 const FILTER_INDEX_TYPES = new Set([ 'number', 'boolean', 'any' ]);
 
 const LIST_OR_RANGE = new Set([ 'list', 'range' ]);
@@ -367,7 +373,9 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
       });
     };
 
-    const nullable = (op, opName, types = NUMBER_ONLY) => (a, b) => {
+    // `temporalOp` handles operations involving a temporal value or a
+    // duration; it yields `undefined` for an invalid combination
+    const nullable = (op, opName, types = NUMBER_ONLY, temporalOp = NO_TEMPORAL_OP) => (a, b, unary = false) => {
 
       const left = a(context);
       const right = b(context);
@@ -381,13 +389,19 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
       const leftType = getType(left);
       const rightType = getType(right);
 
-      if (TEMPORAL_TYPES.has(leftType)) {
-        if (!TEMPORAL_TYPES.has(rightType)) {
+      if (TEMPORAL_TYPES.has(leftType) || TEMPORAL_TYPES.has(rightType)) {
+        const result = temporalOp(left, right, unary);
+
+        if (result === undefined) {
           invalidType(opName, left, right);
 
           return null;
         }
-      } else if (leftType !== rightType || !types.includes(leftType)) {
+
+        return result;
+      }
+
+      if (leftType !== rightType || !types.includes(leftType)) {
         invalidType(opName, left, right);
 
         return null;
@@ -397,50 +411,60 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     };
 
     switch (node.input) {
-    case '+': return nullable((a, b) => {
+    case '+': return nullable((a, b) => a + b, 'add', [ 'string', 'number' ], (a, b) => {
 
-      // flip these as temporal + duration operations aren't commutative
-      if (isDuration(a) && !isDuration(b)) {
-        const tmp = a;
-        a = b;
-        b = tmp;
+      if (isDuration(a) && isDuration(b)) {
+        return addDurations(a, b, 1) ?? undefined;
+      }
+
+      // temporal + duration operations are commutative
+      if (isTemporal(a) && isDuration(b)) {
+        return addDuration(a, b, 1) ?? undefined;
+      }
+
+      if (isDuration(a) && isTemporal(b)) {
+        return addDuration(b, a, 1) ?? undefined;
+      }
+    });
+    case '-': return nullable((a, b) => a - b, 'subtract', [ 'number' ], (a, b, unary) => {
+
+      if (unary && isDuration(b)) {
+        return negateDuration(b);
+      }
+
+      if (isDuration(a) && isDuration(b)) {
+        return addDurations(a, b, -1) ?? undefined;
       }
 
       if (isTemporal(a) && isDuration(b)) {
-        return addDuration(a, b, 1);
-      } else if (isTemporal(a) && isTemporal(b)) {
-        return null;
-      } else if (isDuration(a) && isDuration(b)) {
-        const result = addDurations(a, b, 1);
-
-        if (result === null) {
-          invalidType('add', a, b);
-        }
-
-        return result;
+        return addDuration(a, b, -1) ?? undefined;
       }
 
-      return a + b;
-    }, 'add', [ 'string', 'number', 'date', 'time', 'duration', 'date time' ]);
-    case '-': return nullable((a, b) => {
-      if (isTemporal(a) && isDuration(b)) {
-        return addDuration(a, b, -1);
-      } else if (isTemporal(a) && isTemporal(b)) {
-        return subtractTemporals(a, b);
-      } else if (isDuration(a) && isDuration(b)) {
-        const result = addDurations(a, b, -1);
+      if (isTemporal(a) && isTemporal(b)) {
+        return subtractTemporals(a, b) ?? undefined;
+      }
+    });
+    case '*': return nullable((a, b) => a * b, 'multiply', [ 'number' ], (a, b) => {
 
-        if (result === null) {
-          invalidType('subtract', a, b);
-        }
-
-        return result;
+      if (isDuration(a) && isNumber(b)) {
+        return multiplyDuration(a, b);
       }
 
-      return a - b;
-    }, 'subtract', [ 'number', 'date', 'time', 'duration', 'date time' ]);
-    case '*': return nullable((a, b) => a * b, 'multiply', [ 'number' ]);
-    case '/': return nullable((a, b) => !b ? null : a / b, 'divide', [ 'number' ]);
+      if (isNumber(a) && isDuration(b)) {
+        return multiplyDuration(b, a);
+      }
+    });
+    case '/': return nullable((a, b) => !b ? null : a / b, 'divide', [ 'number' ], (a, b) => {
+
+      if (isDuration(a) && isNumber(b)) {
+        return divideDuration(a, b);
+      }
+
+      // durations of different kinds are distinct types
+      if (isDuration(a) && isDuration(b) && a.yearsMonths === b.yearsMonths) {
+        return divideDurations(a, b);
+      }
+    });
     case '**':
     case '^': return nullable((a, b) => a ** b, 'exponentiate', [ 'number' ]);
     }
@@ -1094,7 +1118,7 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
       return tag((context) => {
 
-        return op(context)(() => 0, value);
+        return op(context)(() => 0, value, true);
       }, value.type);
     }
   })();

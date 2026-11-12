@@ -617,6 +617,11 @@ function describeBuiltins(name, evaluate) {
       expr('is(@"23:00:50@Australia/Melbourne", @"23:00:50@Australia/Sydney")', false);
       expr('is(@"20:00:50+00:00", @"21:00:50+01:00")', false);
 
+      expr('is(@"P1D", @"PT24H")', true);
+      expr('is(@"P1Y", @"P12M")', true);
+      expr('is(@"P1Y", @"P365D")', false);
+      expr('is(@"P0Y", @"P0D")', false);
+
       expr(`
         years and months duration(
           from:date("2016-01-21"),
@@ -631,7 +636,8 @@ function describeBuiltins(name, evaluate) {
         ) = duration("-P1Y")
       `, true);
 
-      expr('duration("-P1Y") = duration("-P365D")', true);
+      // years and months and days and time durations are distinct types
+      expr('duration("-P1Y") = duration("-P365D")', null);
 
       expr('date and time("2012-12-24") = date and time("2012-12-24T00:00:00")', true);
 

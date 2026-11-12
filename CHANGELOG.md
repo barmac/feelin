@@ -6,6 +6,12 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FIX`: support multiplication, division and negation of durations
+* `FIX`: keep the date part when adding a days and time duration to a `date`
+* `FIX`: subtract zoned temporals as instants, yield `null` when mixing zoned and local values
+* `FIX`: yield `null` and warn `INVALID_TYPE` for invalid temporal arithmetic
+* `FIX`: compare durations of different kinds as `null`
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))

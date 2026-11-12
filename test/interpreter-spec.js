@@ -126,7 +126,7 @@ describe('interpreter', function() {
         expr('time("00:01") - duration("PT2M") = time("23:59:00")', true);
 
         expr('time("23:59:00") + duration("PT2M") + duration("P1D") = time("00:01")', true);
-        expr('time("23:59:00") + duration("PT2M") + duration("P1M") = time("00:01")', true);
+        expr('time("23:59:00") + duration("P1M")', null);
 
         // time subtraction yields a signed days-and-time duration (mirroring
         // camunda/feel-scala); zoned times subtract as instants
@@ -185,18 +185,130 @@ describe('interpreter', function() {
         expr('duration("P1Y") - duration("P1D")', null);
         expr('duration("P0Y") + duration("P0D")', null);
 
-        expr('date("2023-10-06") + duration("PT1H")', date('2023-10-06T01:00Z'));
+        expr('date("2023-10-06") + duration("PT1H")', date('2023-10-06'));
         expr('date("2023-10-06") + duration("P1D")', date('2023-10-07'));
         expr('date("2023-10-06") + duration("P7D")', date('2023-10-13'));
         expr('date("2023-10-06") + duration("P1M")', date('2023-11-06'));
         expr('date("2023-10-06") + duration("P1Y")', date('2024-10-06'));
-        expr('date("2023-10-06") - duration("PT1H")', date('2023-10-05T23:00Z'));
+        expr('date("2023-10-06") - duration("PT1H")', date('2023-10-05'));
         expr('date("2023-10-06") - duration("P1D")', date('2023-10-05'));
         expr('date("2023-10-06") - duration("P7D")', date('2023-09-29'));
         expr('date("2023-10-06") - duration("P1M")', date('2023-09-06'));
         expr('date("2023-10-06") - duration("P1Y")', date('2022-10-06'));
         expr('date("2023-10-06") + duration("P1M") = date("2023-11-06")', true);
         expr('date("2023-10-06") - duration("P1M") = date("2023-09-06")', true);
+
+
+        describe('date and days and time duration', function() {
+
+          // the duration applies to midnight, the date part is kept
+          expr('@"2021-01-01" + @"PT36H"', date('2021-01-02'));
+          expr('@"PT36H" + @"2021-01-01"', date('2021-01-02'));
+          expr('@"2021-01-02" - @"PT1H"', date('2021-01-01'));
+          expr('@"2021-01-02" - @"-PT1H"', date('2021-01-02'));
+          expr('@"2021-01-02" - @"PT25H"', date('2020-12-31'));
+
+        });
+
+
+        describe('subtraction of temporals', function() {
+
+          expr('@"2021-01-02T10:10:10" - @"2021-01-01T10:10:10"', duration('P1D'));
+
+          // zoned values subtract as instants
+          expr('@"2021-01-02T10:10:10@Europe/Paris" - @"2021-01-01T10:10:10@Asia/Dhaka"', duration('P1DT5H'));
+
+          // a date is a date and time at midnight UTC
+          expr('@"2021-01-02" - @"2021-01-01T10:10:10+11:00"', duration('P1DT49M50S'));
+          expr('@"2021-01-02" - @"2021-01-01T10:10:10@Australia/Melbourne"', duration('P1DT49M50S'));
+          expr('@"2021-01-02T10:10:10@Europe/Paris" - @"2021-01-01"', duration('P1DT9H10M10S'));
+          expr('@"2021-01-02T10:10:10+01:00" - @"2021-01-01"', duration('P1DT9H10M10S'));
+
+          // zoned and local values do not mix
+          expr('@"2021-01-02" - @"2021-01-01T10:10:10"', null);
+          expr('@"2021-01-01T00:00:00" - @"2021-01-02"', null);
+          expr('@"2021-01-02T10:10:10+02:00" - @"2021-01-01T10:10:10"', null);
+          expr('@"2021-01-02T10:10:10" - @"2021-01-01T10:10:10@Europe/Paris"', null);
+
+          // times do not mix with dates and date times
+          expr('@"2021-01-01" - @"10:10:10"', null);
+          expr('@"10:10:10" - @"2021-01-01T10:10:10"', null);
+
+        });
+
+
+        describe('multiplication', function() {
+
+          expr('@"P1D" * 2', duration('P2D'));
+          expr('2 * @"P1D"', duration('P2D'));
+          expr('@"PT1H" * 26', duration('P1DT2H'));
+          expr('@"P4DT1H" * 1.5', duration('P6DT1H30M'));
+          expr('@"-P1D" * -10', duration('P10D'));
+          expr('@"P1D" * 0', duration('PT0S'));
+
+          expr('2 * @"P1Y"', duration('P2Y'));
+          expr('@"P1M" * 26', duration('P2Y2M'));
+          expr('-2.5 * @"P1Y11M"', duration('-P4Y9M'));
+          expr('@"P1M" * 0', duration('P0M'));
+
+          expr('@"P1D" * @"P1D"', null);
+          expr('@"2021-01-01" * 2', null);
+
+        });
+
+
+        describe('division', function() {
+
+          expr('@"P10D" / 10', duration('P1D'));
+          expr('@"P10DT23H" / 2.5', duration('P4DT9H12M'));
+
+          // years and months durations truncate to whole months
+          expr('@"P1Y" / 2', duration('P6M'));
+          expr('@"P10Y11M" / 2.5', duration('P4Y4M'));
+          expr('@"P10Y11M" / -2.5', duration('-P4Y4M'));
+
+          expr('@"P1D" / 0', null);
+          expr('@"P1Y" / 0', null);
+
+          expr('@"P2D" / @"P1D"', 2);
+          expr('@"P10Y" / @"P5Y"', 2);
+          expr('@"P1D" / @"P0D"', null);
+          expr('@"P1Y" / @"P0Y"', null);
+
+          // mixed duration kinds
+          expr('@"P1Y" / @"P1D"', null);
+          expr('@"P10D" / @"P0Y"', null);
+
+          expr('2 / @"P1D"', null);
+          expr('@"2021-01-01" / @"2021-01-01"', null);
+
+        });
+
+
+        describe('negation', function() {
+
+          expr('-@"P1D"', duration('-P1D'));
+          expr('-@"-P1D"', duration('P1D'));
+          expr('-@"P1Y"', duration('-P1Y'));
+          expr('-@"-P1Y"', duration('P1Y'));
+          expr('-duration("P1Y2M")', duration('-P1Y2M'));
+
+          expr('-@"2021-01-01"', null);
+
+        });
+
+
+        describe('invalid combinations', function() {
+
+          expr('@"P1Y" + @"10:10:10"', null);
+          expr('@"10:10:10" + @"P1Y"', null);
+          expr('@"10:10:10" - @"P1Y"', null);
+          expr('@"P1D" - @"2021-01-01"', null);
+          expr('@"P1Y" - @"10:10:10"', null);
+          expr('@"2021-01-01" ** @"2021-01-01"', null);
+          expr('@"P1D" ** 2', null);
+
+        });
 
       });
 
@@ -1577,6 +1689,16 @@ describe('interpreter', function() {
     expr('@"23:00:50" = @"23:00:50"', true);
     expr('@"23:00:50z" = @"23:00:50Z"', true);
 
+    expr('duration("P1Y") = duration("P12M")', true);
+    expr('duration("P1D") = duration("PT24H")', true);
+    expr('duration("P1M") = duration("P2M")', false);
+
+    // years and months and days and time durations are distinct types,
+    // zero durations of either kind are equal
+    expr('duration("P1Y") = duration("P365D")', null);
+    expr('duration("P1M") = duration("P30D")', null);
+    expr('duration("P0D") = duration("P0Y")', true);
+
     expr('(> 5) = (5 .. null_value]', true, { null_value: null });
 
     expr('(>= 5) = [5 .. null_value]', true, { null_value: null });
@@ -1986,6 +2108,37 @@ describe('interpreter', function() {
             }
           }
         ]);
+      });
+
+
+      it('INVALID_TYPE for invalid temporal arithmetic', function() {
+
+        const expressions = [
+          '@"P1Y" + @"10:10:10"',
+          '@"2021-01-01" + @"2021-01-01"',
+          '@"2021-01-01" - @"10:10:10"',
+          '@"2021-01-02" - @"2021-01-01T10:10:10"',
+          '@"P1D" - @"2021-01-01"',
+          '@"P1D" * @"P1D"',
+          '@"2021-01-01" / @"2021-01-01"',
+          '@"P1Y" / @"P1D"',
+          '2 / @"P1D"',
+          '@"P1D" ** 2',
+          '-@"2021-01-01"'
+        ];
+
+        for (const expression of expressions) {
+
+          // when
+          const {
+            value,
+            warnings
+          } = evaluate(expression);
+
+          // then
+          expect(value, expression).to.be.null;
+          expect(warnings.map(warning => warning.type), expression).to.eql([ 'INVALID_TYPE' ]);
+        }
       });
 
 
