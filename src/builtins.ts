@@ -13,9 +13,9 @@ import {
 } from './types.js';
 
 import {
-  before,
-  meets,
-  includes as includesRange
+  isRange,
+  rangeRelations,
+  relate
 } from './range.js';
 
 import {
@@ -868,61 +868,20 @@ const builtins = {
 
   // 10.3.4.7 Range Functions
 
-  'before': fn(function(a, b) {
-    return before(a, b);
-  }, [ 'any', 'any' ], [ 'a', 'b' ]),
-
-  'after': fn(function(a, b) {
-    return before(b, a);
-  }, [ 'any', 'any' ], [ 'a', 'b' ]),
-
-  'meets': fn(function(range1, range2) {
-    return meets(range1, range2);
-  }, [ 'range', 'range' ], [ 'range1', 'range2' ]),
-
-  'met by': fn(function(range1, range2) {
-    return meets(range2, range1);
-  }, [ 'range', 'range' ], [ 'range1', 'range2' ]),
-
-  'overlaps': fn(function(range1, range2) {
-    return !before(range1, range2) && !before(range2, range1);
-  }, [ 'range', 'range' ], [ 'range1', 'range2' ]),
-
-  'overlaps before': fn(function() {
-    throw notImplemented('overlaps before');
-  }, [ 'any?' ]),
-
-  'overlaps after': fn(function() {
-    throw notImplemented('overlaps after');
-  }, [ 'any?' ]),
-
-  'finishes': fn(function() {
-    throw notImplemented('finishes');
-  }, [ 'any?' ]),
-
-  'finished by': fn(function() {
-    throw notImplemented('finished by');
-  }, [ 'any?' ]),
-
-  'includes': fn(function(range, value) {
-    return includesRange(range, value);
-  }, [ 'range', 'any' ], [ 'range', 'value' ]),
-
-  'during': fn(function() {
-    throw notImplemented('during');
-  }, [ 'any?' ]),
-
-  'starts': fn(function() {
-    throw notImplemented('starts');
-  }, [ 'any?' ]),
-
-  'started by': fn(function() {
-    throw notImplemented('started by');
-  }, [ 'any?' ]),
-
-  'coincides': fn(function() {
-    throw notImplemented('coincides');
-  }, [ 'any?' ]),
+  'before': rangeRelationFn('before'),
+  'after': rangeRelationFn('after'),
+  'meets': rangeRelationFn('meets'),
+  'met by': rangeRelationFn('met by'),
+  'overlaps': rangeRelationFn('overlaps'),
+  'overlaps before': rangeRelationFn('overlaps before'),
+  'overlaps after': rangeRelationFn('overlaps after'),
+  'finishes': rangeRelationFn('finishes'),
+  'finished by': rangeRelationFn('finished by'),
+  'includes': rangeRelationFn('includes'),
+  'during': rangeRelationFn('during'),
+  'starts': rangeRelationFn('starts'),
+  'started by': rangeRelationFn('started by'),
+  'coincides': rangeRelationFn('coincides'),
 
 
   // 10.3.4.8 Temporal built-in functions
@@ -1222,6 +1181,74 @@ function fn(fnDefinition, argDefinitions, parameterNames = null) {
     }
 
     return fnDefinition(...convertedArgs);
+  };
+
+  wrappedFn.$args = parameterNames;
+
+  return wrappedFn;
+}
+
+/**
+ * Create a built-in range function (DMN 1.5, 10.3.4.9) that accepts
+ * each point / range signature of the relation, by position or by name:
+ * `(point1, point2)`, `(point, range)`, `(range, point)` and
+ * `(range1, range2)`.
+ *
+ * Named `point` and `range` arguments bind as `(point, range)` if the
+ * relation defines that signature, as `(range, point)` otherwise.
+ *
+ * @param {string} name
+ *
+ * @return {Function}
+ */
+function rangeRelationFn(name) {
+
+  const relation = rangeRelations[name];
+
+  const signatures = [
+    relation.pp && [ 'point1', 'point2' ],
+    relation.pr && [ 'point', 'range' ],
+    relation.rp && [ 'range', 'point' ],
+    relation.rr && [ 'range1', 'range2' ]
+  ].filter(Boolean);
+
+  // positional arguments bind to the first signature
+  const parameterNames = [ ...new Set(signatures.flat()) ];
+
+  const expected = signatures.map(
+    names => `${ name }(${ names.join(', ') })`
+  ).join(', ');
+
+  const wrappedFn = function(...args) {
+
+    const provided = parameterNames.filter((_, idx) => args[idx] !== undefined);
+
+    const signature = signatures.find(names => (
+      names.length === provided.length &&
+      names.every(n => provided.includes(n))
+    ));
+
+    if (!signature) {
+      return invalidArguments(`${ name } expects ${ expected }`);
+    }
+
+    const [ a, b ] = signature.map(n => args[parameterNames.indexOf(n)]);
+
+    if (a === null || b === null) {
+      return null;
+    }
+
+    const result = relate(relation, a, b);
+
+    if (result === undefined) {
+      const kind = (value) => isRange(value) ? 'range' : getType(value);
+
+      return invalidArguments(
+        `${ name } is not defined for <${ kind(a) }>, <${ kind(b) }>, expected ${ expected }`
+      );
+    }
+
+    return result;
   };
 
   wrappedFn.$args = parameterNames;
