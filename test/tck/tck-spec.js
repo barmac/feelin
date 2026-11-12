@@ -134,12 +134,6 @@ function skipTest(suiteName, testId) {
     '1146-feel-context-put-function-test-01.xml#nested010',
     '1146-feel-context-put-function-test-01.xml#nested011',
 
-    // non-sense nested matcher group
-    '1111-feel-matches-function-test-01.xml#caselessmatch08',
-    '1111-feel-matches-function-test-01.xml#caselessmatch09',
-    '1111-feel-matches-function-test-01.xml#caselessmatch10',
-    '1111-feel-matches-function-test-01.xml#caselessmatch11',
-
     // instance of based on XML types
     '0070-feel-instance-of-test-01.xml#number_013',
     '0070-feel-instance-of-test-01.xml#string_013',

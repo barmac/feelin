@@ -261,6 +261,27 @@ function describeBuiltins(name, evaluate) {
       expr('replace("ab","AB","CD","g")', null);
       expr('replace("ab","AB","CD","y")', null);
 
+      expr('replace("a b c d ", "[a-z]", "#", "x")', '# # # # ');
+      expr('replace(input: "abc", pattern: ".^[d-z]*", replacement: "#", flags: "smix")', 'abc');
+      expr('replace("abc", ".^[d-z]*", "smix")', 'abc');
+      expr('replace("a.b.c", ".", "$", "q")', 'a$b$c');
+      expr('replace("a.b.c", ".", "\\\\", "q")', 'a\\b\\c');
+
+      expr('replace("abracadabra", "a(.)", "a$1$1")', 'abbraccaddabbra');
+      expr('replace("0123456789", "(\\d{3})(\\d{3})(\\d{4})", "($1) $2-$3")', '(012) 345-6789');
+      expr('replace("abc", "b", "[$0]")', 'a[b]c');
+      expr('replace("abc", "(b)", "[$2]")', 'a[]c');
+      expr('replace("abc", "(b)", "[$12]")', 'a[b2]c');
+      expr('replace("abc", "b", "\\$")', 'a$c');
+      expr('replace("abc", "b", "\\\\\\\\")', 'a\\c');
+      expr('replace("abc", "b", "$")', null);
+      expr('replace("abc", "b", "$a")', null);
+      expr('replace("abc", "b", "\\x")', null);
+
+      expr('replace("abc", "x*", "-")', null);
+      expr('replace("abc", "", "-")', null);
+      expr('replace("abc", "\\0", "-")', null);
+
       expr('matches("abab", "ab")', true);
       expr('matches("abc", "abc")', true);
 
@@ -268,8 +289,12 @@ function describeBuiltins(name, evaluate) {
       expr('matches("abc", "abc", "g")', null);
       expr('matches("abc", "abc", "y")', null);
 
+      expr('matches("abc", "abc", "X")', null);
+      expr('matches("abc", "abc", " ")', null);
+
       expr('matches("123", "\\d+", "")', true);
-      expr('matches("😀", "\\u{1F600}")', true);
+      expr('matches("😀", "^.$")', true);
+      expr('matches("😀", "\\u{1F600}")', null);
 
       expr('matches("abc", "abc", "")', true);
       expr('matches("\\n", ".", "s")', true);
@@ -277,17 +302,65 @@ function describeBuiltins(name, evaluate) {
       expr('matches("ABC", "abc", "i")', true);
       expr('matches("abc", "abc", null)', true);
 
-      exprSkip('matches("hello world", "hello\\ sworld", "x")', true);
+      expr('matches("hello world", "hello\\ sworld", "x")', true);
+      expr('matches("hello world", " hello[ ]world", "x")', true);
+      expr('matches("hello world", "he ll o[ ]worl d", "x")', true);
+      expr('matches("hello world", "hello world", "x")', false);
+
+      expr('matches("abracadabra", "(?:abra(?:cad)?)*", "q")', false);
+      expr('matches("x[y-z]", "x[y-z]", "q")', true);
+      expr('matches("x[Y-z]", "X[y-Z]", "qi")', true);
+      expr('matches("a-b c", "a-b c", "qx")', true);
 
       expr('matches("cat or dog", "cat|dog|fish")', true);
       expr('matches("a123b456", "a.*?b")', true);
       expr('matches("foobar", "^fo*b")', true);
+      expr('matches("ab", "(?:a)b")', true);
+      expr('matches("ab", "(?=a)ab")', null);
+      expr('matches("ab", "(?<x>a)b")', null);
+
+      expr('matches("hello world", "\\p{IsBasicLatin}+")', true);
+      expr('matches("hello world", "\\p{ IsBasicLatin}+", "x")', true);
+      expr('matches("hello world", "\\p{ I s B a s i c L a t i n }+", "x")', true);
+      expr('matches("hello world", "\\p{ IsBasicLatin}+")', null);
+      expr('matches("ä", "\\p{IsBasicLatin}")', false);
+      expr('matches("ä", "\\P{IsBasicLatin}")', true);
+      expr('matches("ä", "[a\\P{IsBasicLatin}]")', true);
+      expr('matches("b", "[a\\P{IsBasicLatin}]")', false);
+      expr('matches("a", "\\p{IsNoSuchBlock}")', null);
+      expr('matches("a", "\\p{Ll}")', true);
+      expr('matches("a", "\\P{Ll}")', false);
+      expr('matches("a", "\\p{Script=Latin}")', null);
+
+      expr('matches("٣", "^\\d$")', true);
+      expr('matches("\\u00A0", "\\s")', false);
+      expr('matches("é", "^\\w$")', true);
+      expr('matches("_", "^\\w$")', false);
+      expr('matches("_", "^[\\W]$")', true);
+      expr('matches("abc", "^\\i\\c*$")', true);
+      expr('matches("1bc", "^\\i\\c*$")', false);
+      expr('matches("\\u2028", "^.$")', true);
+      expr('matches("\\r", ".")', false);
 
       expr('matches("abcd", "(asd)[\\1]")', null);
-      exprSkip('matches("abcd", "(asd)[asd\\0]")', null);
-      exprSkip('matches("abcd", "1[asd\\0]")', null);
+      expr('matches("abcd", "(asd)[asd\\1]")', null);
+      expr('matches("abcd", "(asd)[asd\\0]")', null);
+      expr('matches("abcd", "1[asd\\0]")', null);
+      expr('matches("h", "(.)\\2")', null);
+      expr('matches("h", "(.\\1)")', null);
+      expr('matches("aA", "(a)\\1", "i")', true);
+      expr('matches("aa1", "^(a)\\11$")', true);
+      expr('matches("a1", "^(a)\\11$")', false);
+      expr('matches("a b", "a\\bb")', null);
 
       expr('matches("bad pattern","[0-9")', null);
+      expr('matches("a", "[]")', null);
+      expr('matches("a", "[^]")', null);
+      expr('matches("a", "[a[b]]")', null);
+      expr('matches("a", "[\\d-z]")', null);
+      expr('matches("a", "[\\s-z]")', null);
+      expr('matches("input", "[0-9-.]*/")', false);
+      expr('matches("-", "^[a-]$")', true);
 
       expr('matches(input:"abc",pattern:"[A-Z]", flags:"i")', true);
 
@@ -297,10 +370,14 @@ function describeBuiltins(name, evaluate) {
       expr('matches("abcd\\n\\ndefg", "^$", "m")', true);
       expr('matches("a\\n\\nb", "^$", "m")', true);
 
-      exprSkip('matches("x", "[A-Z-[OI]]", "i")', true);
-      exprSkip('matches("X", "[A-Z-[OI]]", "i")', true);
-      exprSkip('matches("O", "[A-Z-[OI]]", "i")', false);
-      exprSkip('matches("i", "[A-Z-[OI]]", "i")', false);
+      expr('matches("x", "[A-Z-[OI]]", "i")', true);
+      expr('matches("X", "[A-Z-[OI]]", "i")', true);
+      expr('matches("O", "[A-Z-[OI]]", "i")', false);
+      expr('matches("i", "[A-Z-[OI]]", "i")', false);
+      expr('matches("b", "^[a-z-[aeiou]]+$")', true);
+      expr('matches("e", "^[a-z-[aeiou]]$")', false);
+      expr('matches("u", "^[a-z-[aeiou-[u]]]$")', true);
+      expr('matches("a", "[a-z-[aeiou]x]")', null);
 
       expr('contains("foobar", "of")', false);
       expr('contains("foobar", "ob")', true);
@@ -318,6 +395,9 @@ function describeBuiltins(name, evaluate) {
       expr('split(string: "foo🐎bar", delimiter: "o.b")', [ 'fo', 'ar' ]);
 
       expr('split("foo bar", "[a-z")', null);
+      expr('split("a1b2c", "(\\d)")', [ 'a', 'b', 'c' ]);
+      expr('split("a-b_c", "\\W")', [ 'a', 'b', 'c' ]);
+      expr('split("abc", "\\0")', null);
 
       expr('string join()', null);
       expr('string join(123, "X")', null);
