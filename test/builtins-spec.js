@@ -957,6 +957,27 @@ function describeBuiltins(name, evaluate) {
 
     });
 
+
+    describe('Warnings', function() {
+
+      it('should name builtin on invalid arguments', function() {
+
+        // when
+        const {
+          value,
+          warnings
+        } = evaluate('day of week(123)');
+
+        // then
+        expect(value).to.be.null;
+
+        expect(warnings.map(w => w.message)).to.eql([
+          "day of week(date) expects <date> to be a date or date and time, got '123'"
+        ]);
+      });
+
+    });
+
   });
 
   // helpers //////////////

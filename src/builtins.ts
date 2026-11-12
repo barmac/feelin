@@ -385,7 +385,18 @@ const builtins = {
 
   // 10.3.4.2 Boolean function
   'not': fn(function(negand) {
-    return isType(negand, 'boolean') ? !negand : null;
+
+    if (negand === null) {
+      return null;
+    }
+
+    if (!isType(negand, 'boolean')) {
+      return invalidArguments('not(negand) expects a boolean, got {negand}', {
+        negand
+      });
+    }
+
+    return !negand;
   }, [ 'any' ], [ 'negand' ]),
 
   // 10.3.4.3 String functions
@@ -555,7 +566,7 @@ const builtins = {
       }
     }
 
-    return nonBool ? null : true;
+    return nonBool ? nonBooleanItem('all', list) : true;
 
   }, 'any?', [ '...list' ]),
 
@@ -574,7 +585,7 @@ const builtins = {
       }
     }
 
-    return nonBool ? null : false;
+    return nonBool ? nonBooleanItem('any', list) : false;
   }, 'any?', [ '...list' ]),
 
   'sublist': fn(function(list, start, length) {
@@ -698,7 +709,7 @@ const builtins = {
   'product': listFn(function(...list) {
 
     if (list.length === 0) {
-      return null;
+      return invalidArguments('product(list) expects a non-empty list');
     }
 
     return list.reduce((result, n) => {
@@ -718,7 +729,9 @@ const builtins = {
   'stddev': listFn(function(...list) {
 
     if (list.length < 2) {
-      return null;
+      return invalidArguments('stddev(list) expects a list of at least two numbers, got {list}', {
+        list
+      });
     }
 
     return stddev(list);
@@ -765,10 +778,6 @@ const builtins = {
 
     if (isDuration(n)) {
       return absDuration(n);
-    }
-
-    if (n === null) {
-      return null;
     }
 
     return invalidArguments('abs(n) expects a number or duration, got {n}', {
@@ -1024,6 +1033,11 @@ const builtins = {
 
 };
 
+// name builtins after their FEEL names, as used in warning messages
+for (const [ name, builtin ] of Object.entries(builtins)) {
+  Object.defineProperty(builtin, 'name', { value: name });
+}
+
 export {
   names,
   builtins
@@ -1122,6 +1136,15 @@ function createArgTester(arg) {
   };
 }
 
+/**
+ * Create a validator that converts arguments according to the given
+ * definitions. It returns the converted arguments, or the index of the
+ * first argument that does not conform to its definition.
+ *
+ * @param {string[]} argDefinitions
+ *
+ * @return {(args: any[]) => any[] | number}
+ */
 function createArgsValidator(argDefinitions) {
 
   const tests = argDefinitions.map(createArgTester);
@@ -1141,7 +1164,7 @@ function createArgsValidator(argDefinitions) {
       const conversion = test ? test(args[index]) : args[index];
 
       if (conversion === FALSE) {
-        return false;
+        return index;
       }
 
       result.push(conversion);
@@ -1165,8 +1188,16 @@ function listFn(fnDefinition, type, parameterNames = null) {
 
   const wrappedFn = function(...args) {
 
+    const [ parameterName ] = wrappedFn.$args;
+
     if (args.length === 0) {
-      return null;
+      return missingArgument(wrappedFn, parameterName);
+    }
+
+    // a single null argument is a missing list,
+    // not a list of null items
+    if (args.length === 1 && args[0] === null) {
+      return nonConformingArgument(wrappedFn, parameterName, 'list', null);
     }
 
     // unwrap first arg
@@ -1174,8 +1205,12 @@ function listFn(fnDefinition, type, parameterNames = null) {
       args = args[0];
     }
 
-    if (!args.every(arg => tester(arg) !== FALSE)) {
-      return null;
+    const invalidIndex = args.findIndex(arg => tester(arg) === FALSE);
+
+    if (invalidIndex !== -1) {
+      return invalidArguments(`${ signature(wrappedFn) } expects <${ toParameterName(parameterName) }> to contain only ${ type }s, got {item}`, {
+        item: args[invalidIndex]
+      });
     }
 
     return fnDefinition(...args);
@@ -1217,8 +1252,18 @@ function fn(fnDefinition, argDefinitions, parameterNames = null) {
 
     const convertedArgs = checkArgs(args);
 
-    if (!convertedArgs) {
-      return null;
+    if (typeof convertedArgs === 'number') {
+      const index = convertedArgs;
+      const value = args[index];
+
+      // a trailing var args parameter covers all remaining arguments
+      const parameterName = parameterNames[Math.min(index, parameterNames.length - 1)];
+
+      if (typeof value === 'undefined') {
+        return missingArgument(wrappedFn, parameterName);
+      }
+
+      return nonConformingArgument(wrappedFn, parameterName, argDefinitions[index], value);
     }
 
     return fnDefinition(...convertedArgs);
@@ -1229,8 +1274,87 @@ function fn(fnDefinition, argDefinitions, parameterNames = null) {
   return wrappedFn;
 }
 
+const ARG_TYPE_NAMES = {
+  'date': 'a date or date and time',
+  'date time': 'a date or date and time',
+  'time': 'a time or date and time'
+};
+
+function toParameterName(parameterName = 'argument') {
+  return parameterName.replace(/^\.\.\./, '');
+}
+
+/**
+ * Signature of a builtin for use in warning messages, e.g. `sqrt(number)`.
+ *
+ * @param {Function} builtin
+ *
+ * @return {string}
+ */
+function signature(builtin) {
+  return `${ builtin.name }(${ builtin.$args.map(toParameterName).join(', ') })`;
+}
+
+/**
+ * Create an {@link invalidArguments} signal for a required argument
+ * that is not provided.
+ *
+ * @param {Function} builtin
+ * @param {string} parameterName
+ *
+ * @return {import('./function.js').InvocationFailure}
+ */
+function missingArgument(builtin, parameterName) {
+  return invalidArguments(`${ signature(builtin) } is missing argument <${ toParameterName(parameterName) }>`);
+}
+
+/**
+ * Create an {@link invalidArguments} signal for an argument that does
+ * not conform to the type it is defined with.
+ *
+ * @param {Function} builtin
+ * @param {string} parameterName
+ * @param {string} argDefinition
+ * @param {any} value
+ *
+ * @return {import('./function.js').InvocationFailure}
+ */
+function nonConformingArgument(builtin, parameterName, argDefinition, value) {
+
+  const name = toParameterName(parameterName);
+
+  const type = argDefinition.replace(/\?$/, '');
+
+  return invalidArguments(`${ signature(builtin) } expects <${ name }> to be ${ ARG_TYPE_NAMES[type] || `a ${ type }` }, got {${ name }}`, {
+    [ name ]: value
+  });
+}
+
 function sum(list) {
   return list.reduce((sum, el) => sum === null ? el : sum + el, null);
+}
+
+/**
+ * Undecided result of `all` / `any`: unknown (`null`) if the list holds
+ * `null` items only, an {@link invalidArguments} signal if it holds any
+ * other non-boolean item.
+ *
+ * @param {string} name
+ * @param {any[]} list
+ *
+ * @return {null | import('./function.js').InvocationFailure}
+ */
+function nonBooleanItem(name, list) {
+
+  const index = list.findIndex(item => item !== null && typeof item !== 'boolean');
+
+  if (index === -1) {
+    return null;
+  }
+
+  return invalidArguments(`${ name }(list) expects a list of booleans, got {item}`, {
+    item: list[index]
+  });
 }
 
 /**

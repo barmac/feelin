@@ -2347,6 +2347,92 @@ describe('interpreter', function() {
 
       });
 
+
+      describe('for error results', function() {
+
+        [
+
+          // arithmetic
+          [ '100 / 0', 'INVALID_ARGUMENTS', "Can't divide '100' by '0'" ],
+          [ '10 * null', 'INVALID_TYPE' ],
+          [ 'null.b', 'NO_PROPERTY_FOUND' ],
+
+          // missing, null or non-conforming builtin arguments
+          [ 'sqrt("4")', 'INVALID_ARGUMENTS', 'sqrt(number) expects <number> to be a number, got \'"4"\'' ],
+          [ 'modulo(10, null)', 'INVALID_ARGUMENTS', "modulo(dividend, divisor) expects <divisor> to be a number, got 'null'" ],
+          [ 'abs()', 'INVALID_ARGUMENTS', 'abs(n) is missing argument <n>' ],
+          [ 'abs(null)', 'INVALID_ARGUMENTS', "abs(n) expects a number or duration, got 'null'" ],
+          [ 'get value({a: "foo"}, 123)', 'INVALID_ARGUMENTS', "get value(m, key) expects <key> to be a string, got '123'" ],
+          [ 'day of year("foo")', 'INVALID_ARGUMENTS', 'day of year(date) expects <date> to be a date or date and time, got \'"foo"\'' ],
+          [ 'context put(null, "a", 1)', 'INVALID_ARGUMENTS', "context put(context, keys, value, key) expects <context> to be a context, got 'null'" ],
+          [ 'not(0)', 'INVALID_ARGUMENTS', "not(negand) expects a boolean, got '0'" ],
+          [ 'not()', 'INVALID_ARGUMENTS', 'not(negand) is missing argument <negand>' ],
+          [ 'all([true, 123])', 'INVALID_ARGUMENTS', "all(list) expects a list of booleans, got '123'" ],
+          [ 'any(123)', 'INVALID_ARGUMENTS', "any(list) expects a list of booleans, got '123'" ],
+          [ 'all(null)', 'INVALID_ARGUMENTS', "all(list) expects <list> to be a list, got 'null'" ],
+          [ 'any(list: null)', 'INVALID_ARGUMENTS', 'any(list) is missing argument <list>' ],
+          [ 'min()', 'INVALID_ARGUMENTS', 'min(list) is missing argument <list>' ],
+          [ 'sum([1, "foo"])', 'INVALID_ARGUMENTS', 'sum(list) expects <list> to contain only numbers, got \'"foo"\'' ],
+          [ 'product([])', 'INVALID_ARGUMENTS', 'product(list) expects a non-empty list' ],
+          [ 'stddev([1])', 'INVALID_ARGUMENTS', "stddev(list) expects a list of at least two numbers, got '[1 items]'" ],
+
+          // comparisons that cannot be decided
+          [ 'null between 1 and 10', 'NOT_COMPARABLE', "Can't test whether 'null' is between '1' and '10'" ],
+          [ '2 between 1 and null', 'NOT_COMPARABLE', "Can't test whether '2' is between '1' and 'null'" ],
+          [ '2 between null and 10', 'NOT_COMPARABLE', "Can't test whether '2' is between 'null' and '10'" ],
+          [ 'null in [1..10]', 'NOT_COMPARABLE', "Can't test whether 'null' is in '[1..10]'" ],
+          [ 'false = 0', 'NOT_COMPARABLE', "Can't compare 'false' and '0'" ],
+          [ '1 < null', 'NOT_COMPARABLE', "Can't compare '1' and 'null'" ]
+        ].forEach(([ expression, type, message ]) => {
+
+          it(`${ type } for <${ expression }>`, function() {
+
+            // when
+            const {
+              value,
+              warnings
+            } = evaluate(expression);
+
+            // then
+            expect(value).to.be.null;
+
+            expect(warnings).to.have.length(1);
+            expect(warnings[0].type).to.eql(type);
+
+            if (message) {
+              expect(warnings[0].message).to.eql(message);
+            }
+          });
+
+        });
+
+
+        it('with argument values', function() {
+
+          // when
+          const {
+            warnings
+          } = evaluate('sqrt("4")');
+
+          // then
+          expect(warnings[0].details.values).to.eql({ number: '4' });
+        });
+
+
+        it('with position of invocation', function() {
+
+          // when
+          const {
+            warnings
+          } = evaluate('1 + sqrt("4")');
+
+          // then
+          expect(warnings).to.have.length(2);
+          expect(warnings[0].position).to.eql({ from: 4, to: 13 });
+        });
+
+      });
+
     });
 
 
@@ -2426,17 +2512,35 @@ describe('interpreter', function() {
       });
 
 
-      it('for abs(null) null propagation', function() {
+      [
+        [ 'not(null)', null ],
+        [ 'all([true, null])', null ],
+        [ 'all([null])', null ],
+        [ 'any(null, false)', null ],
+        [ 'string(null)', null ],
+        [ 'get value({a: 1}, "b")', null ],
+        [ 'median([])', null ],
+        [ '1 = null', false ],
+        [ 'null = null', true ],
+        [ 'null != 1', true ],
+        [ 'x = null', true, { x: null } ],
+        [ '5 between 1 and 10', true ],
+        [ '5 in [1..10]', true ]
+      ].forEach(([ expression, expectedValue, context ]) => {
 
-        // when
-        const {
-          value,
-          warnings
-        } = evaluate('abs(null)');
+        it(`for regular result of <${ expression }>`, function() {
 
-        // then
-        expect(value).to.be.null;
-        expect(warnings).to.be.empty;
+          // when
+          const {
+            value,
+            warnings
+          } = evaluate(expression, context);
+
+          // then
+          expect(value).to.eql(expectedValue);
+          expect(warnings).to.be.empty;
+        });
+
       });
 
 
