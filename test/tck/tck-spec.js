@@ -41,16 +41,18 @@ describe('tck', function() {
               context,
               expression,
               expectedValue,
+              errorResult,
               decision
             } = run;
 
             let a;
+            let warnings = [];
 
             const c = tryEval(context);
             const b = tryEval(expectedValue);
 
             if (c !== NOT_IMPLEMENTED) {
-              a = tryEval(expression.text, fixContext(suite.testName, decision)(c));
+              ({ value: a, warnings } = tryEvaluate(expression.text, fixContext(suite.testName, decision)(c)));
             } else {
               console.error(`Failed to evaluate context: ${context}`);
 
@@ -84,6 +86,11 @@ describe('tck', function() {
                   expect(a).to.eql(b);
                 }
               }
+
+              // an error result must be told apart from a regular null
+              if (errorResult && !skipErrorWarning(suite.testName, testCase.id)) {
+                expect(warnings, 'warnings indicating the error result').not.to.be.empty;
+              }
             });
 
           }
@@ -100,14 +107,18 @@ describe('tck', function() {
 
 
 function tryEval(expr, context = {}) {
+  return tryEvaluate(expr, context).value;
+}
+
+function tryEvaluate(expr, context = {}) {
   try {
-    return evaluate(expr, context).value;
+    return evaluate(expr, context);
   } catch (err) {
     if (err.message.startsWith('not implemented')) {
-      return NOT_IMPLEMENTED;
+      return { value: NOT_IMPLEMENTED, warnings: [] };
     }
 
-    return new Error(err.message);
+    return { value: new Error(err.message), warnings: [] };
   }
 }
 
@@ -181,6 +192,29 @@ function skipTest(suiteName, testId) {
     '1143-feel-round-half-up-function-test-01.xml#017_b',
     '1144-feel-round-half-down-function-test-01.xml#016_b',
     '1144-feel-round-half-down-function-test-01.xml#017_b',
+  ].includes(`${suiteName}#${testId}`);
+}
+
+/**
+ * Error results (`errorResult="true"`) that yield the expected `null`
+ * but do not indicate the error through a warning, yet.
+ */
+function skipErrorWarning(suiteName, testId) {
+  return [
+
+    // invalid duration properties
+    '0074-feel-properties-test-01.xml#ym_duration_003',
+    '0074-feel-properties-test-01.xml#ym_duration_004',
+    '0074-feel-properties-test-01.xml#ym_duration_005',
+    '0074-feel-properties-test-01.xml#ym_duration_006',
+    '0074-feel-properties-test-01.xml#dt_duration_001',
+    '0074-feel-properties-test-01.xml#dt_duration_002',
+
+    // null scale
+    '1101-feel-floor-function-test-01.xml#008',
+    '1101-feel-floor-function-test-01.xml#009',
+    '1102-feel-ceiling-function-test-01.xml#008',
+    '1102-feel-ceiling-function-test-01.xml#009'
   ].includes(`${suiteName}#${testId}`);
 }
 

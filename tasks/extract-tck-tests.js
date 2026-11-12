@@ -208,6 +208,7 @@ function merge(test, expressions) {
       context,
       expression: expressions.find(expr => expr.name === resultNode.name),
       expectedValue: resultNode.value,
+      errorResult: resultNode.errorResult,
       decision: resultNode.name
     }));
 
@@ -352,7 +353,8 @@ function parseTestFile(file) {
 
         node = {
           name: el.attrs.name,
-          type: el.attrs.type
+          type: el.attrs.type,
+          errorResult: el.attrs.errorResult === 'true'
         };
 
         testCase.resultNodes.push(node);

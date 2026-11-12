@@ -440,7 +440,22 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
       return a - b;
     }, 'subtract', [ 'number', 'date', 'time', 'duration', 'date time' ]);
     case '*': return nullable((a, b) => a * b, 'multiply', [ 'number' ]);
-    case '/': return nullable((a, b) => !b ? null : a / b, 'divide', [ 'number' ]);
+    case '/': return nullable((a, b) => {
+
+      if (!b) {
+        interpreterContext.addWarning(node, 'INVALID_ARGUMENTS', {
+          template: "Can't divide {left} by {right}",
+          values: {
+            left: a,
+            right: b
+          }
+        });
+
+        return null;
+      }
+
+      return a / b;
+    }, 'divide', [ 'number' ]);
     case '**':
     case '^': return nullable((a, b) => a ** b, 'exponentiate', [ 'number' ]);
     }
@@ -1014,20 +1029,29 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     // expression !compare kw<"in"> PositiveUnaryTest |
     // expression !compare kw<"in"> !unaryTest "(" PositiveUnaryTests ")"
     if (operator === 'in') {
-      return compareIn(args[0](context), (args[3] || args[2])(context));
+      const value = args[0](context);
+      const tests = (args[3] || args[2])(context);
+
+      return decideComparison(compareIn(value, tests), node, interpreterContext, "Can't test whether {value} is in {tests}", {
+        value,
+        tests
+      });
     }
 
     // expression !compare kw<"between"> expression kw<"and"> expression
     if (operator === 'between') {
 
+      const value = args[0](context);
       const start = args[2](context);
       const end = args[4](context);
 
-      if (start === null || end === null) {
-        return null;
-      }
+      const result = (start === null || end === null) ? null : createRange(start, end).includes(value);
 
-      return createRange(start, end).includes(args[0](context));
+      return decideComparison(result, node, interpreterContext, "Can't test whether {value} is between {start} and {end}", {
+        value,
+        start,
+        end
+      });
     }
 
     // expression !compare CompareOp<"=" | "!="> expression |
@@ -1037,7 +1061,10 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
     const test = operator()(right);
 
-    return compareValue(test, left);
+    return decideComparison(compareValue(test, left), node, interpreterContext, "Can't compare {left} and {right}", {
+      left,
+      right
+    });
   }, 'test');
 
   case 'QuantifiedExpression': return tag((context) => {
@@ -1347,6 +1374,28 @@ function compareIn(value, tests) {
   }
 
   return unknown ? null : false;
+}
+
+/**
+ * Pass through the result of a comparison, warning if it cannot be
+ * decided, i.e. is `null`.
+ */
+function decideComparison(
+    result: boolean | null,
+    node: Node,
+    interpreterContext: InterpreterContext,
+    template: string,
+    values: Record<string, unknown>
+) {
+
+  if (result === null) {
+    interpreterContext.addWarning(node, 'NOT_COMPARABLE', {
+      template,
+      values
+    });
+  }
+
+  return result;
 }
 
 function compareValue(test, value) {

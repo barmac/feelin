@@ -6,6 +6,9 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FEAT`: warn when an expression yields `null` because of an error, to tell errors from regular `null` results: `INVALID_ARGUMENTS` on division by zero and on missing, `null` or non-conforming built-in arguments, `NOT_COMPARABLE` on comparisons that cannot be decided
+* `FIX`: warn `INVALID_ARGUMENTS` on `abs(null)`
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))
