@@ -368,6 +368,129 @@ describe('interpreter', function() {
           a: function() external { anything: "goes" }
         }
       `, { a: null });
+
+
+      describe('external function handler', function() {
+
+        const JAVA_MAX = `
+          {
+            max: function(a, b) external {
+              java: { class: "java.lang.Math", method signature: "max(double, double)" }
+            },
+            r: max(1, 2)
+          }.r
+        `;
+
+        function javaHandler({ mapping }) {
+          const java = mapping && mapping.java;
+
+          if (java && java.class === 'java.lang.Math' && java['method signature'] === 'max(double, double)') {
+            return Math.max;
+          }
+
+          return null;
+        }
+
+
+        it('should invoke external function', function() {
+
+          // when
+          const { value, warnings } = evaluate(JAVA_MAX, {}, undefined, {
+            externalFunctionHandler: javaHandler
+          });
+
+          // then
+          expect(value).to.eql(2);
+          expect(warnings).to.be.empty;
+        });
+
+
+        it('should pass definition', function() {
+
+          // given
+          const definitions = [];
+
+          // when
+          evaluate(`
+            function(a, b) external {
+              java: { class: cls, method signature: "max(" + type + ", " + type + ")" }
+            }
+          `, { cls: 'java.lang.Math', type: 'double' }, undefined, {
+            externalFunctionHandler(definition) {
+              definitions.push(definition);
+
+              return Math.max;
+            }
+          });
+
+          // then
+          expect(definitions).to.eql([
+            {
+              mapping: {
+                java: {
+                  class: 'java.lang.Math',
+                  'method signature': 'max(double, double)'
+                }
+              },
+              parameterNames: [ 'a', 'b' ]
+            }
+          ]);
+        });
+
+
+        it('should bind named parameters', function() {
+
+          // when
+          const { value } = evaluate(`
+            {
+              pow: function(base, exponent) external { js: "pow" },
+              r: pow(exponent: 10, base: 2)
+            }.r
+          `, {}, undefined, {
+            externalFunctionHandler: ({ mapping }) => mapping.js === 'pow' ? Math.pow : null
+          });
+
+          // then
+          expect(value).to.eql(1024);
+        });
+
+
+        it('should return function', function() {
+
+          // when
+          const { value } = evaluate('function(a, b) external { js: "max" }', {}, undefined, {
+            externalFunctionHandler: () => Math.max
+          });
+
+          // then
+          expect(isFunction(value)).to.be.true;
+          expect(value.parameterNames).to.eql([ 'a', 'b' ]);
+        });
+
+
+        it('should support unaryTest', function() {
+
+          // when
+          const { value } = unaryTest('(function(a, b) external { js: "max" })(?, 10) = 10', { '?': 5 }, undefined, {
+            externalFunctionHandler: () => Math.max
+          });
+
+          // then
+          expect(value).to.be.true;
+        });
+
+
+        it('should not support external functions by default', function() {
+
+          // when
+          const { value } = evaluate(JAVA_MAX);
+
+          // then
+          expect(value).to.be.null;
+        });
+
+      });
+
     });
 
 
@@ -2297,6 +2420,52 @@ describe('interpreter', function() {
             }
           }
         ]);
+      });
+
+
+      it('UNSUPPORTED if external function handler declines', function() {
+
+        // when
+        const {
+          value,
+          warnings
+        } = evaluate('function(a) external { pmml: { document: "d", model: "m" } }', {}, undefined, {
+          externalFunctionHandler: () => null
+        });
+
+        // then
+        expect(value).to.be.null;
+
+        expect(warnings).to.have.length(1);
+
+        expect(warnings[0]).to.include({
+          type: 'UNSUPPORTED',
+          message: 'External functions are not supported'
+        });
+      });
+
+
+      it('FUNCTION_INVOCATION_FAILURE if external function throws', function() {
+
+        // when
+        const {
+          value,
+          warnings
+        } = evaluate('{ f: function(s) external { js: "parse" }, r: f("abc") }.r', {}, undefined, {
+          externalFunctionHandler: () => (s) => {
+            throw new Error(`cannot parse <${ s }>`);
+          }
+        });
+
+        // then
+        expect(value).to.be.null;
+
+        expect(warnings).to.have.length(1);
+
+        expect(warnings[0]).to.include({
+          type: 'FUNCTION_INVOCATION_FAILURE',
+          message: "Cannot invoke 'function(s)': cannot parse <abc>"
+        });
       });
 
 

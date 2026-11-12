@@ -44,6 +44,30 @@ console.log(warnings);
 // ]
 ```
 
+External functions (`function(...) external { ... }`) are not supported out of the box. Provide an `externalFunctionHandler` to implement them:
+
+```javascript
+evaluate(`{
+  max: function(a, b) external {
+    java: { class: "java.lang.Math", method signature: "max(double, double)" }
+  },
+  result: max(1, 2)
+}.result`, {}, undefined, {
+
+  // receives the evaluated mapping and the formal parameter names;
+  // returns the implementation, or null if the mapping is not supported
+  externalFunctionHandler({ mapping, parameterNames }) {
+    const java = mapping?.java;
+
+    if (java?.class === 'java.lang.Math' && java['method signature'] === 'max(double, double)') {
+      return Math.max;
+    }
+
+    return null;
+  }
+}); // { value: 2, warnings: [] }
+```
+
 ## Features
 
 * [x] Recognizes full FEEL grammar

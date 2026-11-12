@@ -1,6 +1,7 @@
 import {
   evaluate,
-  unaryTest
+  unaryTest,
+  ExternalFunctionHandler
 } from '..';
 
 import { expect } from 'chai';
@@ -20,6 +21,23 @@ describe('types', function() {
       // then
       expect(value).to.eql('HELLO');
       expect(warnings).to.eql([]);
+    });
+
+
+    it('should evaluate with external function handler', function() {
+
+      // given
+      const externalFunctionHandler: ExternalFunctionHandler = ({ mapping, parameterNames }) => {
+        return mapping && parameterNames.length === 2 ? Math.max : null;
+      };
+
+      // when
+      const { value } = evaluate('(function(a, b) external { js: "max" })(1, 2)', {}, undefined, {
+        externalFunctionHandler
+      });
+
+      // then
+      expect(value).to.eql(2);
     });
 
   });

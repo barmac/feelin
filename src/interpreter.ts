@@ -20,6 +20,7 @@ import {
 } from './range.js';
 
 import {
+  InvocationFailure,
   isInvocationFailure,
   wrapFunction
 } from './function.js';
@@ -78,6 +79,42 @@ export type EvaluationResult<T> = {
  */
 export type EvalContext = Record<string, unknown>;
 
+/**
+ * Definition of an external function, e.g.
+ * `function(a, b) external { java: { class: "java.lang.Math", method signature: "max(double, double)" } }`.
+ */
+export type ExternalFunctionDefinition = {
+
+  /**
+   * The evaluated external function body, e.g.
+   * `{ java: { class: "java.lang.Math", "method signature": "max(double, double)" } }`.
+   */
+  mapping: unknown,
+
+  /**
+   * Names of the function's formal parameters.
+   */
+  parameterNames: string[]
+};
+
+/**
+ * Provides the implementation of an external function.
+ *
+ * Returns a function to invoke with the positional arguments, or `null`
+ * if the definition is not supported. Errors thrown by the implementation
+ * fail the invocation with a warning.
+ */
+export type ExternalFunctionHandler = (definition: ExternalFunctionDefinition) => ((...args: any[]) => unknown) | null | undefined;
+
+export type EvaluationOptions = {
+
+  /**
+   * Handler that implements external functions; without it, external
+   * function definitions evaluate to `null` with an `UNSUPPORTED` warning.
+   */
+  externalFunctionHandler?: ExternalFunctionHandler
+};
+
 export class SyntaxError extends Error {
 
   input: string;
@@ -107,6 +144,12 @@ function formatDetails(template: string, values: Record<string, any>) {
 
 class InterpreterContext {
   warnings: Warning[] = [];
+
+  externalFunctionHandler: ExternalFunctionHandler | undefined;
+
+  constructor(options: EvaluationOptions = {}) {
+    this.externalFunctionHandler = options.externalFunctionHandler;
+  }
 
   addWarning(node: Node, type: WarningType, details: { template: string, values: Record<string, unknown> }): void {
 
@@ -266,10 +309,11 @@ const LIST_OR_RANGE = new Set([ 'list', 'range' ]);
 export function unaryTest(
     expression: string,
     evalContext: EvalContext = {},
-    dialect?: string
+    dialect?: string,
+    options?: EvaluationOptions
 ) : EvaluationResult<boolean | null> {
 
-  const interpreterContext = new InterpreterContext();
+  const interpreterContext = new InterpreterContext(options);
 
   evalContext = coerceContext(evalContext);
 
@@ -293,10 +337,11 @@ export function unaryTest(
 export function evaluate(
     expression: string,
     evalContext: EvalContext = {},
-    dialect?: string
+    dialect?: string,
+    options?: EvaluationOptions
 ): EvaluationResult<unknown> {
 
-  const interpreterContext = new InterpreterContext();
+  const interpreterContext = new InterpreterContext(options);
 
   evalContext = coerceContext(evalContext);
 
@@ -545,12 +590,37 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     const external = args[4] === 'external';
 
     if (external) {
-      interpreterContext.addWarning(node, 'UNSUPPORTED', {
-        template: 'External functions are not supported',
-        values: {}
+
+      const handler = interpreterContext.externalFunctionHandler;
+
+      const impl = handler && handler({
+        mapping: args[5](context),
+        parameterNames
       });
 
-      return null;
+      if (typeof impl !== 'function') {
+        interpreterContext.addWarning(node, 'UNSUPPORTED', {
+          template: 'External functions are not supported',
+          values: {}
+        });
+
+        return null;
+      }
+
+      const fn = wrapFunction((...args) => {
+
+        try {
+          return impl(...args);
+        } catch (error) {
+          return new InvocationFailure(
+            'FUNCTION_INVOCATION_FAILURE',
+            `Cannot invoke {target}: ${ error instanceof Error ? error.message : String(error) }`,
+            { target: fn }
+          );
+        }
+      }, parameterNames);
+
+      return fn;
     }
 
     const fnBody = args[external ? 5 : 4];
