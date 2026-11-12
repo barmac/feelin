@@ -1363,6 +1363,45 @@ describe('interpreter', function() {
     unary(false, 'some x in ? satisfies true', false);
 
 
+    describe('boolean input', function() {
+
+      // cf. DMN TCK compliance-level-3/0036-dt-variable-input
+      // the value of a test not referencing <?> is compared with the input
+      unary({ '?': false, Complex: { aBoolean: true } }, 'Complex.aBoolean', false);
+      unary({ '?': false, Complex: { aBoolean: true } }, 'not(Complex.aBoolean)', true);
+      unary({ '?': true, Complex: { aBoolean: true } }, 'Complex.aBoolean', true);
+      unary({ '?': true, Complex: { aBoolean: true } }, 'not(Complex.aBoolean)', false);
+
+      unary({ '?': false, x: true }, 'x', false);
+      unary({ '?': false, x: false }, 'x', true);
+      unary({ '?': false, x: true }, 'not(x)', true);
+      unary({ '?': false, x: true }, 'x, false', true);
+      unary({ '?': false, x: true, y: true }, 'x, y', false);
+      unary({ '?': false, x: 10 }, 'x > 5', false);
+      unary({ '?': true, x: 10 }, 'x > 5', true);
+      unary({ '?': false, x: null }, 'x', false);
+
+      // a test referencing <?> yields its result
+      unary(false, 'not(?)', true);
+      unary(true, 'not(?)', false);
+      unary({ '?': false, x: true }, '? or x', true);
+      unary({ '?': true, x: false }, '? and x', false);
+
+      // operands of <in> are compared with the tested value
+      unary({ '?': false, x: true }, '? in (x)', false);
+      unary({ '?': true, x: true }, '? in (x)', true);
+      unary(false, '? in (true)', false);
+      unary(false, '? in (false)', true);
+      unary(false, '? in (true, false)', true);
+
+      // a non-boolean input meets the boolean result of a test
+      unary({ '?': 3, x: 10 }, 'x > 5', true);
+      unary({ '?': 3, x: true }, 'x', true);
+      unary({ x: 10 }, 'x > 5', true);
+
+    });
+
+
     describe('Interval', function() {
 
       unary(4, '[4..6]', true);

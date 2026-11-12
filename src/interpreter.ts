@@ -127,7 +127,10 @@ class InterpreterContext {
 type Node = {
   name: string,
   input: string,
-  position: SourceLocation
+  position: SourceLocation,
+
+  // whether the node references the implicit input value `?`
+  usesInput?: boolean
 };
 
 type StackEntry = {
@@ -207,6 +210,10 @@ class Interpreter {
         const parent = stack[stack.length - 1];
 
         const expr = evalNode(node, args, interpreterContext);
+
+        if (node.usesInput) {
+          parent.node.usesInput = true;
+        }
 
         parent.args.push(expr);
       }
@@ -626,6 +633,11 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
     const name = args.join(' ');
 
+    // `?` parses as a variable name if it is part of the context
+    if (name === '?') {
+      node.usesInput = true;
+    }
+
     // builtins are fixed; resolve the fallback once at build time
     const builtin = getBuiltin(name, null);
 
@@ -661,7 +673,11 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     )
   };
 
-  case '?': return (context) => getFromContext('?', context);
+  case '?': {
+    node.usesInput = true;
+
+    return (context) => getFromContext('?', context);
+  }
 
   // expression
   // expression ".." expression
@@ -1099,16 +1115,12 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     }
   })();
 
-  case 'PositiveUnaryTest': return (context) => {
-
-    // ensure that we strictly compare boolean values
-    // with the implicit context value, if we match a unary test
-    if (args[0].type === 'boolean' && has(context, '?')) {
-      return args[0](context) === context['?'];
-    }
-
-    return args[0](context);
-  };
+  // evaluates to the plain value of the test, matched against
+  // the tested value by the consumer (UnaryTests, in)
+  case 'PositiveUnaryTest': return Object.assign((context) => args[0](context), {
+    booleanLiteral: args[0].type === 'boolean',
+    usesInput: !!node.usesInput
+  });
 
   case 'ParenthesizedExpression': return args[1];
 
@@ -1255,7 +1267,10 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     }, 'test');
   }
 
-  case 'PositiveUnaryTests':
+  case 'PositiveUnaryTests': return Object.assign((context) => {
+    return args.map(a => a(context));
+  }, { tests: args });
+
   case 'Expressions': return (context) => {
     return args.map(a => a(context));
   };
@@ -1268,26 +1283,25 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
     const negate = args[0] === 'not';
 
-    const tests = negate ? args.slice(2, -1) : args;
+    // "-" | PositiveUnaryTests | "not" "(" PositiveUnaryTests ")"
+    const tests = (negate ? args[2] : args[0]).tests;
+
+    // "-" matches any value
+    if (!tests) {
+      return (_context) => (_value = null) => true;
+    }
 
     return (context) => {
 
+      const hasInput = has(context, '?');
+
       return (value = null) => {
 
-        const matches = tests.map(test => test(context)).flat(1).map(test => {
+        const matches = tests.some(
+          test => matchPositiveUnaryTest(test, test(context), value, hasInput) === true
+        );
 
-          if (isArray(test)) {
-            return test.includes(value);
-          }
-
-          if (typeof test === 'boolean') {
-            return test;
-          }
-
-          return compareValue(test, value);
-        }).some(v => v === true);
-
-        return matches === null ? null : (negate ? !matches : matches);
+        return negate ? !matches : matches;
       };
     };
   }
@@ -1347,6 +1361,35 @@ function compareIn(value, tests) {
   }
 
   return unknown ? null : false;
+}
+
+/**
+ * Match the result of a positive unary test against the tested value.
+ */
+function matchPositiveUnaryTest(test, result, value, hasInput: boolean) {
+
+  if (isArray(result)) {
+    return result.includes(value);
+  }
+
+  if (typeof result === 'boolean') {
+
+    // a test referencing the input (`? > 5`, `even(?)`) yields its result
+    if (test.usesInput) {
+      return result;
+    }
+
+    // the value of any other test is compared with the input,
+    // cf. DMN 1.5, 10.3.2.12; a non-boolean input leniently
+    // meets the result of a boolean expression (`x > 5`)
+    if (isBoolean(value) || (test.booleanLiteral && hasInput)) {
+      return result === value;
+    }
+
+    return result;
+  }
+
+  return compareValue(result, value);
 }
 
 function compareValue(test, value) {
