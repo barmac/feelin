@@ -1147,6 +1147,29 @@ describe('interpreter', function() {
         }
       `, { a: 1, b: 2 });
 
+      expr('{ a: 1, b: a + 1 }.b', 2);
+
+
+      describe('duplicate keys', function() {
+
+        expr('{ foo: "bar", foo: "baz" }', null);
+
+        expr('{ foo: 1, "foo": 2 }', null);
+
+        expr('{ "foo": 1, foo: 2 }', null);
+
+        expr('{ hello  world: 1, "hello world": 2 }', null);
+
+        expr('{ a: 1, b: 2, a: 3 }', null);
+
+        expr('{ a: { b: 1, b: 2 } }', { a: null });
+
+        expr('{ a: 1, b: { a: 2 } }', { a: 1, b: { a: 2 } });
+
+        expr('{ "foo": 1, "Foo": 2 }', { foo: 1, Foo: 2 });
+
+      });
+
     });
 
 
@@ -1823,6 +1846,52 @@ describe('interpreter', function() {
       });
 
 
+      it('INVALID_TYPE on duplicate context key', function() {
+
+        // when
+        const {
+          value,
+          warnings
+        } = evaluate('{ foo: 1, "foo": 2 }');
+
+        // then
+        expect(value).to.be.null;
+
+        expect(warnings).to.eql([
+          {
+            message: "Duplicate context key '\"foo\"'",
+            type: 'INVALID_TYPE',
+            position: { from: 10, to: 18 },
+            details: {
+              template: 'Duplicate context key {key}',
+              values: {
+                key: 'foo'
+              }
+            }
+          }
+        ]);
+      });
+
+
+      it('INVALID_TYPE on duplicate context key only once', function() {
+
+        // when
+        const {
+          value,
+          warnings
+        } = evaluate('{ a: 1, a: x, a: 3 }');
+
+        // then
+        expect(value).to.be.null;
+
+        expect(warnings).to.have.length(1);
+        expect(warnings[0]).to.include({
+          type: 'INVALID_TYPE',
+          message: "Duplicate context key '\"a\"'"
+        });
+      });
+
+
       it('NO_PROPERTY_FOUND in number', function() {
 
         // when
@@ -2447,7 +2516,11 @@ describe('interpreter', function() {
         'replace("abc", "b", "x")',
         'number("1000")',
         'string join(["a", "b"], "-")',
-        'context put({}, "a", 1)'
+        'context put({}, "a", 1)',
+        'context put({ a: 1 }, "a", 2)',
+        'context merge([ { a: 1 }, { a: 2 } ])',
+        '{ a: 1, b: a + 1 }',
+        '{ a: 1, b: { a: 2 } }'
       ].forEach((expression) => {
 
         it(`for valid <${ expression }>`, function() {

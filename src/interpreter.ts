@@ -513,6 +513,33 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
     const entries = args.slice(1, -1);
 
+    // keys are static, so detect a duplicate key once at build time
+    const keys = new Set();
+
+    const duplicate = entries.find(({ key }) => {
+
+      if (keys.has(key)) {
+        return true;
+      }
+
+      keys.add(key);
+
+      return false;
+    });
+
+    if (duplicate) {
+      return () => {
+        interpreterContext.addWarning(duplicate.node, 'INVALID_TYPE', {
+          template: 'Duplicate context key {key}',
+          values: {
+            key: duplicate.key
+          }
+        });
+
+        return null;
+      };
+    }
+
     return (context) => {
 
       // entries may reference earlier keys, so evaluate each against
@@ -520,8 +547,8 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
       const merged = { ...context };
       const result = {};
 
-      for (const arg of entries) {
-        const [ key, value ] = arg(merged);
+      for (const { key, value: valueFn } of entries) {
+        const value = valueFn(merged);
 
         merged[key] = value;
         result[key] = value;
@@ -569,13 +596,11 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     }, parameterNames);
   };
 
-  case 'ContextEntry': return (context) => {
-
-    const key = typeof args[0] === 'function' ? args[0](context) : args[0];
-
-    const value = args[1](context);
-
-    return [ key, value ];
+  // keys are either names or string literals, both known at build time
+  case 'ContextEntry': return {
+    key: typeof args[0] === 'function' ? args[0].constantValue : args[0],
+    value: args[1],
+    node
   };
 
   case 'Key': return args[0];

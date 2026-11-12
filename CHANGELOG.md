@@ -6,6 +6,8 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FIX`: return `null` and warn `INVALID_TYPE` on context literals with duplicate keys (e.g. `{foo: 1, "foo": 2}`)
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))

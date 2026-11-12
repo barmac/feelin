@@ -126,7 +126,6 @@ function skipSuite(suiteName) {
 
 function skipTest(suiteName, testId) {
   return [
-    '0057-feel-context-test-01.xml#008',
 
     // interoperability with boxed expressions
     '1146-feel-context-put-function-test-01.xml#014',

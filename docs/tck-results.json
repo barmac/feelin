@@ -1,6 +1,6 @@
 {
-  "passes": 1901,
-  "pending": 102,
+  "passes": 1902,
+  "pending": 101,
   "failures": 50,
   "tests": 2053,
   "failedTests": [
@@ -57,7 +57,6 @@
   ],
   "pendingTests": [
     "tck - 0050-feel-abs-function-test-01.xml - 013 - abs(date(\"-2018-12-06\")) === null",
-    "tck - 0057-feel-context-test-01.xml - 008 - {foo: \"bar\", foo: \"baz\"} === null",
     "tck - 0070-feel-instance-of-test-01.xml - number_013 - 256 instance of t255 === true",
     "tck - 0070-feel-instance-of-test-01.xml - string_013 - \"123\" instance of tFooBar === true",
     "tck - 0070-feel-instance-of-test-01.xml - list_013 - [1,2,3] instance of tNumberList === true",
