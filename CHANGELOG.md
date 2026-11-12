@@ -6,7 +6,7 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
-* `FIX`: let `null` list elements and context entry values conform to any type in `instance of`
+* `FIX`: let `null` list elements and context entry values conform to any type in `instance of` ([#1](https://github.com/barmac/feelin/pull/1))
 
 ## 8.2.0
 
