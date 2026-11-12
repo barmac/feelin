@@ -439,6 +439,26 @@ function describeBuiltins(name, evaluate) {
       expr('list replace ( [2, 4, 7, 8], function(item, newItem) item < newItem, 5)', [ 5, 5, 7, 8 ]);
       expr('list replace(list: [2, 4, 7, 8], match: function(item, newItem) item < newItem, newItem: 5)', [ 5, 5, 7, 8 ]);
 
+      expr('list replace([1,2,3], -1, 4)', [ 1, 2, 4 ]);
+      expr('list replace([1,2,3], -3, 4)', [ 4, 2, 3 ]);
+      expr('list replace([1,2,3], 0, 4)', null);
+      expr('list replace([1,2,3], 4, 4)', null);
+      expr('list replace([1,2,3], -4, 4)', null);
+      expr('list replace([1,2,3], 2.5, 4)', [ 1, 4, 3 ]);
+      expr('list replace([1,2,3], -1.5, 4)', [ 1, 2, 4 ]);
+      expr('list replace([1,2,3], 3, null)', [ 1, 2, null ]);
+      expr('list replace([1,2,3], null, 4)', null);
+      expr('list replace([1,2,3], "2", 4)', null);
+      expr('list replace(null, 1, 4)', null);
+      expr('list replace(1, 1, 5)', [ 5 ]);
+      expr('list replace(position: 2, newItem: 4, list: [1,2,3], foo: 1)', null);
+      expr('list replace(position: 2, match: function(item, newItem) true, newItem: 4, list: [1,2,3])', null);
+
+      expr('list replace([2, 4], function(item) item = 2, 5)', null);
+      expr('list replace([2, 4], function(item, newItem, extraParam) item = 2, 5)', null);
+      expr('list replace([2, 4], function(item, newItem) item, 5)', null);
+      expr('list replace([1, 2, 3, 4], function(item, newItem) true, 5)', [ 5, 5, 5, 5 ]);
+
     });
 
 
