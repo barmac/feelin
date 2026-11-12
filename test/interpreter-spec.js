@@ -952,6 +952,24 @@ describe('interpreter', function() {
         a: { b: 'foo' }
       });
 
+      expr('true[true]', [ true ]);
+
+      expr('true[false]', []);
+
+      expr('100[true]', [ 100 ]);
+
+      expr('100[false]', []);
+
+      expr('"foo"[true]', [ 'foo' ]);
+
+      expr('"foo"[false]', []);
+
+      expr('a[true]', [ { b: 'foo' } ], {
+        a: { b: 'foo' }
+      });
+
+      expr('a[b]', [ 100 ], { a: 100, b: true });
+
       expr('a[ b > 10 ]', [ { b: 11 }, { b: 15 } ], {
         a: [
           { b: 5 },

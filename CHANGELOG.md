@@ -6,6 +6,8 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FIX`: return a singleton list when filtering a non-list value with `true` (e.g. `100[true]`)
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))
