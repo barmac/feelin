@@ -6,6 +6,12 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FIX`: tell comparison ranges (`< 10`, `= 10`, `!= 10`) apart from intervals in range equality, so `(< 10) = (null..10)` and `(= 10) = [10..10]` are `false` and `(= 10) = (= 10)` is `true`
+* `FIX`: return `null` when testing membership in an interval with a `null` bound (`5 in [1..null]`)
+* `FIX`: expose `start`, `end`, `start included` and `end included` on `= x` and `!= x` ranges
+* `FIX`: iterate over dates in `for` expressions (`for d in @"2020-01-01"..@"2020-01-03"`, also descending)
+* `FIX`: return `null` instead of throwing or hanging when iterating anything but integers or dates (`"a".."c"`, `1..2.5`, `@"P1D"..@"P2D"`) or over a descending interval (`[2..1]`)
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))

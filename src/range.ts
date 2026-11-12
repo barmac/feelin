@@ -1,6 +1,6 @@
-import { toComparable } from './temporal.js';
+import { toComparable, addDuration, duration } from './temporal.js';
 
-import { getType } from './types.js';
+import { getType, equals } from './types.js';
 
 /**
  * The FEEL types whose values are temporal instants (`date`, `time` and
@@ -32,12 +32,18 @@ const TEMPORAL_INSTANT_TYPES = new Set([ 'date', 'time', 'date time' ]);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type RangeValue = any;
 
+/**
+ * The unary comparison a range was created from (e.g. `< 10`, `= 10`).
+ */
+export type RangeOperator = '<' | '<=' | '>' | '>=' | '=' | '!=';
+
 export type FeelRangeProps = {
   'start included': boolean;
   'end included': boolean;
   start: RangeValue | null;
   end: RangeValue | null;
   valueType: string | null;
+  operator?: RangeOperator | null;
 };
 
 /**
@@ -60,17 +66,30 @@ export class FeelRange {
    */
   valueType: string | null;
 
-  constructor(props: FeelRangeProps) {
-    Object.assign(this, props);
+  /**
+   * @internal the unary comparison the range was created from, `null`
+   * for an interval (e.g. `[1..10]`).
+   *
+   * A comparison range is a distinct kind of range: `< 10` is unbounded
+   * at its start, while the interval `(null..10)` has an explicit `null`
+   * start that turns every comparison `null`. `= 10` and `!= 10` match
+   * by equality.
+   */
+  operator: RangeOperator | null;
 
-    // the element type is identity, not a FEEL-visible property; keep it
-    // non-enumerable so it does not leak into context spreads / path access
+  constructor(props: FeelRangeProps) {
+    Object.assign(this, { operator: null }, props);
+
+    // the element type and the operator are identity, not FEEL-visible
+    // properties; keep them non-enumerable so they do not leak into
+    // context spreads
     Object.defineProperty(this, 'valueType', { enumerable: false });
+    Object.defineProperty(this, 'operator', { enumerable: false });
   }
 
   /**
    * Whether the range includes the given point or range. Returns `null`
-   * for the empty range or a `null` probe.
+   * for a `null` probe or a `null` bound of an interval.
    */
   includes(value: RangeValue | null) : boolean | null {
     return rangeIncludes(this, value);
@@ -78,13 +97,26 @@ export class FeelRange {
 
   /**
    * Enumerate the range, applying `fn` to each element. Only defined for
-   * closed number ranges and single-character string ranges.
+   * ascending intervals of integers or dates; returns `null` for any
+   * other range.
    */
-  map<T>(fn: (val: RangeValue) => T) : T[] {
-    return rangeMap(this, fn);
+  map<T>(fn: (val: RangeValue) => T) : T[] | null {
+    const values = rangeValues(this);
+
+    return values && values.map(fn);
   }
 
   toString() : string {
+    const { operator } = this;
+
+    if (operator === '<' || operator === '<=') {
+      return `${operator} ${this.end}`;
+    }
+
+    if (operator) {
+      return `${operator} ${this.start}`;
+    }
+
     const startBracket = this['start included'] ? '[' : '(';
     const endBracket = this['end included'] ? ']' : ')';
 
@@ -155,7 +187,28 @@ function beforeEnd(value, end, endIncluded) {
   return endIncluded ? c <= 0 : c < 0;
 }
 
+function isStartUnbounded(range: FeelRange) : boolean {
+  return range.operator === '<' || range.operator === '<=';
+}
+
+function isEndUnbounded(range: FeelRange) : boolean {
+  return range.operator === '>' || range.operator === '>=';
+}
+
 function rangeIncludes(range: FeelRange, value: RangeValue | null) : boolean | null {
+
+  const { operator } = range;
+
+  // `= x` and `!= x` match by equality
+  if (operator === '=') {
+    return equals(value, range.start);
+  }
+
+  if (operator === '!=') {
+    const result = equals(value, range.start);
+
+    return result === null ? null : !result;
+  }
 
   let { start, end } = range;
   let startIncluded = range['start included'];
@@ -167,6 +220,15 @@ function rangeIncludes(range: FeelRange, value: RangeValue | null) : boolean | n
   }
 
   if (value === null || value === undefined) {
+    return null;
+  }
+
+  // a comparison with a `null` bound is `null`, unless the range is
+  // unbounded on that side (e.g. `< 10`)
+  if (
+    (start === null && !isStartUnbounded(range)) ||
+    (end === null && !isEndUnbounded(range))
+  ) {
     return null;
   }
 
@@ -284,85 +346,75 @@ export function includes(range: FeelRange, value: RangeValue) : boolean | null {
 
 // iteration /////////////////////////////////////////////////////////
 
-const CHARS = Array.from(
-  'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-);
-
-const CHAR_TO_INDEX = new Map(CHARS.map((c, i) => [ c, i ]));
-
-function rangeMap<T>(range: FeelRange, fn: (val: RangeValue) => T) : T[] {
-
-  const { start, end, valueType } = range;
-
-  // empty range
-  if (start === null && end === null) {
-    return [];
-  }
-
-  if (valueType === 'number' && start !== null && end !== null) {
-    return numberRangeMap(start, end, range['start included'], range['end included'], fn);
-  }
-
-  if (valueType === 'string' && start !== null && end !== null) {
-    const values = charRangeValues(start, end, range['start included'], range['end included']);
-
-    if (values) {
-      return values.map(fn);
-    }
-  }
-
-  throw new Error('unsupported range operation: map');
+/**
+ * Enumerate the iteration context `start..end`: the integers or the
+ * dates from `start` to `end` (both included), ascending or descending.
+ * Returns `null` for any other bounds.
+ */
+export function enumerate(start: RangeValue | null, end: RangeValue | null) : RangeValue[] | null {
+  return enumerateValues(start, end, true, true, true);
 }
 
-function numberRangeMap<T>(start, end, startIncluded, endIncluded, fn: (val) => T) : T[] {
+/**
+ * Enumerate an interval. Only ascending intervals of integers or dates
+ * can be enumerated (e.g. `[1..3)`, but neither `[3..1]` nor `< 3`).
+ */
+function rangeValues(range: FeelRange) : RangeValue[] | null {
 
-  const direction = start > end ? -1 : 1;
-
-  const result: T[] = [];
-
-  for (let i = start;; i += direction) {
-
-    if (i === start && !startIncluded) {
-      continue;
-    }
-
-    if (i === end && !endIncluded) {
-      break;
-    }
-
-    result.push(fn(i));
-
-    if (i === end) {
-      break;
-    }
-  }
-
-  return result;
-}
-
-function charRangeValues(start, end, startIncluded, endIncluded) : string[] | null {
-
-  let startIdx = CHAR_TO_INDEX.get(start);
-  let endIdx = CHAR_TO_INDEX.get(end);
-
-  if (startIdx === undefined || endIdx === undefined) {
+  if (range.operator !== null) {
     return null;
   }
 
-  const direction = startIdx > endIdx ? -1 : 1;
+  return enumerateValues(range.start, range.end, range['start included'], range['end included'], false);
+}
 
-  if (startIncluded === false) {
-    startIdx += direction;
+function enumerateValues(
+    start: RangeValue | null,
+    end: RangeValue | null,
+    startIncluded: boolean,
+    endIncluded: boolean,
+    allowDescending: boolean
+) : RangeValue[] | null {
+
+  const type = getType(start);
+
+  if (type !== getType(end) || (type !== 'number' && type !== 'date')) {
+    return null;
   }
 
-  if (endIncluded === false) {
-    endIdx -= direction;
+  if (type === 'number' && !(Number.isInteger(start) && Number.isInteger(end))) {
+    return null;
   }
 
-  return CHARS.slice(
-    Math.min(startIdx, endIdx),
-    Math.max(startIdx, endIdx) + 1
-  );
+  const step = cmp(start, end) > 0 ? -1 : 1;
+
+  if (step < 0 && !allowDescending) {
+    return null;
+  }
+
+  const values: RangeValue[] = [];
+
+  if (type === 'number') {
+    for (let i = start; step * (end - i) >= 0; i += step) {
+      values.push(i);
+    }
+  } else {
+    const oneDay = duration('P1D');
+
+    for (let d = start; step * cmp(end, d) >= 0; d = addDuration(d, oneDay, step)) {
+      values.push(d);
+    }
+  }
+
+  if (!startIncluded) {
+    values.shift();
+  }
+
+  if (!endIncluded) {
+    values.pop();
+  }
+
+  return values;
 }
 
 
@@ -404,4 +456,33 @@ export function createRange(
     'end included': endIncluded,
     valueType
   });
+}
+
+/**
+ * Whether the value can be a range bound.
+ */
+export function isRangeEndpoint(value: RangeValue | null) : boolean {
+  return RANGE_TYPES.has(getType(value));
+}
+
+/**
+ * Create a {@link FeelRange} from a unary comparison (e.g. `< 10`,
+ * `= 10`).
+ */
+export function createComparisonRange(operator: RangeOperator, endpoint: RangeValue | null) : FeelRange {
+
+  const range = (() => {
+    switch (operator) {
+    case '<': return createRange(null, endpoint, false, false);
+    case '<=': return createRange(null, endpoint, false, true);
+    case '>': return createRange(endpoint, null, false, false);
+    case '>=': return createRange(endpoint, null, true, false);
+    case '=': return createRange(endpoint, endpoint, true, true);
+    case '!=': return createRange(endpoint, endpoint, false, false);
+    }
+  })();
+
+  range.operator = operator;
+
+  return range;
 }

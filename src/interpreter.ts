@@ -16,7 +16,10 @@ import {
 
 import {
   isRange,
-  createRange
+  isRangeEndpoint,
+  createRange,
+  createComparisonRange,
+  enumerate
 } from './range.js';
 
 import {
@@ -446,21 +449,26 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     }
   };
 
-  case 'CompareOp': return tag(() => {
+  case 'CompareOp': {
 
-    switch (node.input) {
-    case '>': return (b) => createRange(b, null, false, false);
-    case '>=': return (b) => createRange(b, null, true, false);
-    case '<': return (b) => createRange(null, b, false, false);
-    case '<=': return (b) => createRange(null, b, false, true);
-    case '=': return (b) => (a) => equals(a, b);
-    case '!=': return (b) => (a) => {
-      const result = equals(a, b);
-      return result === null ? null : !result;
-    };
-    }
+    const operator = node.input;
 
-  }, 'test');
+    return Object.assign(tag(() => {
+
+      switch (operator) {
+      case '>':
+      case '>=':
+      case '<':
+      case '<=': return (b) => createComparisonRange(operator, b);
+      case '=': return (b) => (a) => equals(a, b);
+      case '!=': return (b) => (a) => {
+        const result = equals(a, b);
+        return result === null ? null : !result;
+      };
+      }
+
+    }, 'test'), { operator });
+  }
 
   case 'BacktickIdentifier': return node.input.replace(/`/g, '');
 
@@ -669,9 +677,11 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
 
     const a = args[0](context);
 
-    const b = args[2] && args[2](context);
+    if (!args[2]) {
+      return a;
+    }
 
-    return b ? createRange(a, b) : a;
+    return enumerate(a, args[2](context));
   };
 
   case 'Type': return args[0];
@@ -1217,16 +1227,33 @@ function evalNode(node: Node, args: any[], interpreterContext: InterpreterContex
     return null;
   }, 'any');
 
-  case 'SimplePositiveUnaryTest': return tag((context) => {
+  case 'SimplePositiveUnaryTest': {
 
-    // <Interval>
-    if (args.length === 1) {
-      return args[0](context);
+    const operator = args.length === 1 ? null : args[0].operator;
+
+    // `= x` and `!= x` denote ranges, too (e.g. `(= 10).start`)
+    if (operator === '=' || operator === '!=') {
+
+      return tag((context) => {
+        const endpoint = args[1](context);
+
+        return isRangeEndpoint(endpoint)
+          ? createComparisonRange(operator, endpoint)
+          : args[0](context)(endpoint);
+      }, 'test');
     }
 
-    // <CompareOp> <Expr>
-    return args[0](context)(args[1](context));
-  }, 'test');
+    return tag((context) => {
+
+      // <Interval>
+      if (args.length === 1) {
+        return args[0](context);
+      }
+
+      // <CompareOp> <Expr>
+      return args[0](context)(args[1](context));
+    }, 'test');
+  }
 
   case 'List': {
 
