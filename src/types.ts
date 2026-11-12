@@ -213,6 +213,12 @@ export function equals(a, b, strict = false) {
   }
 
   if (aType === 'duration') {
+
+    // years and months and days and time durations are distinct types
+    if (strict && a.yearsMonths !== b.yearsMonths) {
+      return false;
+    }
+
     return durationEquals(a, b);
   }
 

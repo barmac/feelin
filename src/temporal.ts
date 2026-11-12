@@ -615,13 +615,20 @@ function isYearsMonthsString(str: string) : boolean {
 /**
  * Whether two durations are equal, comparing years / months durations by
  * month and days / time durations by second (mirroring FEEL semantics).
+ *
+ * Returns `null` for durations of different kinds, which are distinct
+ * FEEL types; zero durations of either kind are equal.
  */
-export function durationEquals(a: FeelDuration, b: FeelDuration) : boolean {
+export function durationEquals(a: FeelDuration, b: FeelDuration) : boolean | null {
+
+  if (a.yearsMonths !== b.yearsMonths) {
+    return a.value.sign === 0 && b.value.sign === 0 ? true : null;
+  }
 
   const total = (d: FeelDuration, unit) => d.value.total({ unit, relativeTo: REFERENCE_DATE });
 
   // years and months duration -> compare in months
-  if (Math.abs(total(a, 'day')) > 180) {
+  if (a.yearsMonths) {
     return Math.trunc(total(a, 'month') - total(b, 'month')) === 0;
   }
 
@@ -672,25 +679,31 @@ function hasTimeComponent(d: FeelDuration) : boolean {
 
 /**
  * Add (`sign > 0`) or subtract (`sign < 0`) a duration from a temporal
- * instant, returning a new temporal instant.
+ * instant, returning a new temporal instant, or `null` for an undefined
+ * combination (a <time> and a years and months duration).
  *
- * A local <date> combined with a time-bearing duration is promoted to a
- * UTC <date and time> (bare dates are anchored in UTC).
+ * A <date> combined with a days and time duration applies the duration
+ * to midnight and keeps the date part.
  */
-export function addDuration(temporal: FeelTemporal, dur: FeelDuration, sign: number) : FeelTemporal {
+export function addDuration(temporal: FeelTemporal, dur: FeelDuration, sign: number) : FeelTemporal | null {
 
   const d = sign < 0 ? dur.value.negated() : dur.value;
 
   if (isDate(temporal)) {
 
     if (hasTimeComponent(dur)) {
-      return new FeelDateTime(temporal.value.toPlainDateTime().add(d), 'UTC');
+      return new FeelDate(temporal.value.toPlainDateTime().add(d).toPlainDate());
     }
 
     return new FeelDate(temporal.value.add(d));
   }
 
   if (isTime(temporal)) {
+
+    if (dur.yearsMonths) {
+      return null;
+    }
+
 
     // times wrap around midnight and keep their zone
     return new FeelTime(temporal.value.add(d), temporal.zone);
@@ -714,18 +727,124 @@ export function addDuration(temporal: FeelTemporal, dur: FeelDuration, sign: num
 }
 
 /**
- * Subtract two temporal instants, yielding a {@link FeelDuration}.
+ * Subtract two temporal instants, yielding a days and time
+ * {@link FeelDuration}, or `null` for an undefined combination.
+ *
+ * A <time> only subtracts from a <time>. Otherwise a <date> is a
+ * <date and time> at midnight UTC; zoned values subtract as instants,
+ * and a zoned value never subtracts from a local one (or vice versa).
  */
-export function subtractTemporals(a: FeelTemporal, b: FeelTemporal) : FeelDuration {
+export function subtractTemporals(a: FeelTemporal, b: FeelTemporal) : FeelDuration | null {
 
-  if (isTime(a) && isTime(b)) {
-    return new FeelDuration(a.value.since(b.value));
+  if (isTime(a) || isTime(b)) {
+
+    if (!isTime(a) || !isTime(b)) {
+      return null;
+    }
+
+    return new FeelDuration(a.value.since(b.value), false);
   }
 
-  const left = toPlainDateTime(a);
-  const right = toPlainDateTime(b);
+  if (isDate(a) && isDate(b)) {
+    return new FeelDuration(a.value.since(b.value, { largestUnit: 'day' }), false);
+  }
 
-  return new FeelDuration(left.since(right, { largestUnit: 'day' }));
+  const left = isDate(a) ? atMidnightUTC(a) : a;
+  const right = isDate(b) ? atMidnightUTC(b) : b;
+
+  if (isZoned(left) !== isZoned(right)) {
+    return null;
+  }
+
+  if (!isZoned(left)) {
+    return new FeelDuration(left.value.since(right.value, { largestUnit: 'day' }), false);
+  }
+
+  return new FeelDuration(toInstant(left).since(toInstant(right), { largestUnit: 'hour' }), false);
+}
+
+/**
+ * Multiply a duration by a number.
+ *
+ * Years and months durations truncate to whole months.
+ */
+export function multiplyDuration(dur: FeelDuration, factor: number) : FeelDuration | null {
+  return scaleDuration(dur, (n) => n * factor);
+}
+
+/**
+ * Divide a duration by a number, returning `null` for a zero divisor.
+ *
+ * Years and months durations truncate to whole months.
+ */
+export function divideDuration(dur: FeelDuration, divisor: number) : FeelDuration | null {
+
+  if (divisor === 0) {
+    return null;
+  }
+
+  return scaleDuration(dur, (n) => n / divisor);
+}
+
+/**
+ * Divide a duration by a duration of the same kind, yielding a number;
+ * returns `null` for a zero divisor or durations of different kinds.
+ */
+export function divideDurations(a: FeelDuration, b: FeelDuration) : number | null {
+
+  if (a.yearsMonths !== b.yearsMonths) {
+    return null;
+  }
+
+  const divisor = durationTotal(b);
+
+  return divisor === 0 ? null : durationTotal(a) / divisor;
+}
+
+/**
+ * Negate a duration, retaining its kind.
+ */
+export function negateDuration(dur: FeelDuration) : FeelDuration {
+  return new FeelDuration(dur.value.negated(), dur.yearsMonths);
+}
+
+/**
+ * The total of a duration in its kind's unit: months for a years and
+ * months duration, nanoseconds for a days and time duration.
+ */
+function durationTotal(dur: FeelDuration) : number {
+  return dur.value.total({
+    unit: dur.yearsMonths ? 'month' : 'nanosecond',
+    relativeTo: REFERENCE_DATE
+  });
+}
+
+/**
+ * Scale a duration via its {@link durationTotal}, retaining its kind.
+ */
+function scaleDuration(dur: FeelDuration, scale: (n: number) => number) : FeelDuration | null {
+
+  const total = scale(durationTotal(dur));
+
+  if (!Number.isFinite(total)) {
+    return null;
+  }
+
+  if (dur.yearsMonths) {
+
+    // guard against floating point artifacts (e.g. 0.29 * 100) before
+    // truncating to whole months
+    const months = Math.trunc(Number(total.toPrecision(15)));
+
+    return new FeelDuration(Temporal.Duration.from({ months }), true);
+  }
+
+  const nanoseconds = Math.round(total);
+
+  return new FeelDuration(Temporal.Duration.from({
+    seconds: Math.trunc(nanoseconds / 1e9),
+    nanoseconds: nanoseconds % 1e9
+  }), false);
 }
 
 /**
@@ -770,18 +889,27 @@ export function yearsAndMonthsDuration(from: FeelDate, to: FeelDate) : FeelDurat
 
 // conversions ///////////////////////////////////////////////////////
 
-function toPlainDateTime(temporal: FeelTemporal) : Temporal.PlainDateTime {
+/**
+ * A date as a <date and time> at midnight UTC.
+ */
+function atMidnightUTC(date: FeelDate) : FeelDateTime {
+  return new FeelDateTime(date.value.toPlainDateTime(), 'UTC');
+}
 
-  if (isDate(temporal)) {
-    return temporal.value.toPlainDateTime();
+/**
+ * The exact instant of a zoned date time.
+ */
+function toInstant(dateTime: FeelDateTime) : Temporal.Instant {
+
+  const offsetSeconds = offsetZoneSeconds(dateTime.zone);
+
+  // sub-minute offset zone: interpret the wall clock at UTC, then shift
+  // by the fixed offset (Temporal rejects such offset zones)
+  if (offsetSeconds !== null) {
+    return dateTime.value.toZonedDateTime('UTC').toInstant().subtract({ seconds: offsetSeconds });
   }
 
-  if (isDateTime(temporal)) {
-    return temporal.value;
-  }
-
-  // time
-  return REFERENCE_DATE.toPlainDateTime(temporal.value);
+  return dateTime.value.toZonedDateTime(dateTime.zone).toInstant();
 }
 
 /**
