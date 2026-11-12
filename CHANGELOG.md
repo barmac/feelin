@@ -6,6 +6,15 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FEAT`: support the full FEEL temporal value range, including negative years and years up to ±999,999,999
+* `FIX`: format years the FEEL way (e.g. `-2017-12-31` rather than `-002017-12-31`)
+* `FIX`: reject zone offsets beyond `±18:00` and times that carry both an offset and a zone
+* `FIX`: support end of day (`24:00:00`) in `date and time` literals
+* `FIX`: retain fractional seconds in `time(hour, minute, second, offset)`
+* `FIX`: support `duration("PT0.S")` and durations beyond Temporal's date range (e.g. `P999999999M`)
+* `FIX`: count whole months only in `years and months duration`
+* `FIX`: parse `date` strings strictly as `[-]YYYY-MM-DD`
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))

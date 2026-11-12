@@ -1,7 +1,5 @@
 import { Temporal } from 'temporal-polyfill';
 
-import { notImplemented } from './utils.js';
-
 /**
  * This module is the single place in the code base that talks to the
  * underlying temporal implementation ({@link Temporal}, provided by
@@ -21,6 +19,105 @@ import { notImplemented } from './utils.js';
  */
 const REFERENCE_DATE = Temporal.PlainDate.from('1970-01-01');
 
+/**
+ * FEEL supports years in [-999,999,999..999,999,999], Temporal only about
+ * ±271,821. A date (or date time) beyond the range natively represented
+ * is backed by an in-range proxy plus a year offset that is a multiple of
+ * 400: the Gregorian calendar repeats every 400 years (146,097 days, an
+ * exact number of weeks), so the proxy shares leap years, weekdays and
+ * days of year with the value it represents.
+ */
+const MAX_FEEL_YEAR = 999_999_999;
+
+const MIN_NATIVE_YEAR = -271_000;
+const MAX_NATIVE_YEAR = 275_000;
+
+const CYCLE_YEARS = 400;
+const CYCLE_MONTHS = CYCLE_YEARS * 12;
+const CYCLE_DAYS = 146_097;
+
+const MS_PER_DAY = 86_400_000;
+
+const MIN_SAFE_MILLISECONDS = BigInt(Number.MIN_SAFE_INTEGER);
+const MAX_SAFE_MILLISECONDS = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Years beyond which date arithmetic is carried out on a proxy, so that
+ * the (cycle-reduced) duration cannot leave the Temporal range.
+ */
+const MAX_ARITHMETIC_YEAR = 200_000;
+
+/**
+ * The largest fixed zone offset FEEL supports (`±18:00`).
+ */
+const MAX_OFFSET_SECONDS = 18 * 3600;
+
+/**
+ * The year offset (a multiple of {@link CYCLE_YEARS}) that moves a year
+ * into the proxy range `[2000, 2400)`.
+ */
+function cycleOffset(year: number) : number {
+  return Math.floor((year - 2000) / CYCLE_YEARS) * CYCLE_YEARS;
+}
+
+/**
+ * Split a year into a year natively represented by Temporal and a year
+ * offset (`0` for years within the native range).
+ */
+function splitYear(year: number) : { year: number, offset: number } {
+
+  if (year >= MIN_NATIVE_YEAR && year <= MAX_NATIVE_YEAR) {
+    return { year, offset: 0 };
+  }
+
+  const offset = cycleOffset(year);
+
+  return { year: year - offset, offset };
+}
+
+/**
+ * Normalize a (proxied) value and its year offset to the canonical form:
+ * values within the native range carry no offset, others are backed by a
+ * proxy in `[2000, 2400)`.
+ */
+function rebase<T extends Temporal.PlainDate | Temporal.PlainDateTime>(value: T, yearOffset: number) : [ T, number ] {
+
+  const { year, offset } = splitYear(value.year + yearOffset);
+
+  if (year === value.year) {
+    return [ value, offset ];
+  }
+
+  return [ value.with({ year }) as T, offset ];
+}
+
+/**
+ * Format a year the FEEL way: at least four digits, with a sign for
+ * negative years only (e.g. `-2017`, `0001`, `999999999`).
+ */
+function formatYear(year: number) : string {
+  return (year < 0 ? '-' : '') + String(Math.abs(year)).padStart(4, '0');
+}
+
+/**
+ * Format the date part of a (proxied) value.
+ */
+function formatDate(value: Temporal.PlainDate | Temporal.PlainDateTime, yearOffset: number) : string {
+
+  const year = value.year + yearOffset;
+
+  return formatYear(year) + '-' +
+    String(value.month).padStart(2, '0') + '-' +
+    String(value.day).padStart(2, '0');
+}
+
+/**
+ * Whether a year can be formatted the Temporal way (four digits, no sign).
+ */
+function isFourDigitYear(year: number) : boolean {
+  return year >= 0 && year <= 9999;
+}
+
 
 // wrapper classes ///////////////////////////////////////////////////
 
@@ -35,22 +132,34 @@ export class FeelDate {
   readonly value: Temporal.PlainDate;
 
   /**
+   * Years to add to the underlying temporal value; non-zero (a multiple
+   * of 400) for a date beyond the range Temporal supports, in which case
+   * {@link value} is an in-range proxy that shares leap years, weekdays
+   * and days of year with the date it represents.
+   */
+  readonly yearOffset: number;
+
+  /**
    * @internal canonical ISO-8601 form; drives both display and
    * structural comparison
    */
   readonly iso: string;
 
-  constructor(value: Temporal.PlainDate) {
-    this.value = value;
-    this.iso = this.value.toString();
+  constructor(value: Temporal.PlainDate, yearOffset = 0) {
+    [ this.value, this.yearOffset ] = rebase(value, yearOffset);
+
+    this.iso = this.yearOffset === 0 && isFourDigitYear(this.value.year)
+      ? this.value.toString()
+      : formatDate(this.value, this.yearOffset);
 
     // the raw Temporal value is an implementation detail; keep it
     // non-enumerable so structural equality and serialization rely on
     // the canonical `iso` string rather than the underlying value
     Object.defineProperty(this, 'value', { enumerable: false });
+    Object.defineProperty(this, 'yearOffset', { enumerable: false });
   }
 
-  get year() { return this.value.year; }
+  get year() { return this.value.year + this.yearOffset; }
   get month() { return this.value.month; }
   get day() { return this.value.day; }
   get weekday() { return this.value.dayOfWeek; }
@@ -59,7 +168,9 @@ export class FeelDate {
    * Return the underlying `Temporal.PlainDate`.
    *
    * Escape hatch for consumers that need the raw temporal value. The
-   * returned type is implementation specific and may change.
+   * returned type is implementation specific and may change. For a date
+   * beyond the range Temporal supports this is a proxy, see
+   * {@link yearOffset}.
    */
   unwrap() : Temporal.PlainDate {
     return this.value;
@@ -155,23 +266,36 @@ export class FeelDateTime {
   readonly zone: string | null;
 
   /**
+   * Years to add to the underlying temporal value; non-zero (a multiple
+   * of 400) for a date time beyond the range Temporal supports, in which
+   * case {@link value} is an in-range proxy (see {@link FeelDate.yearOffset}).
+   */
+  readonly yearOffset: number;
+
+  /**
    * @internal canonical form (wall-clock plus zone); drives both
    * display and structural comparison
    */
   readonly iso: string;
 
-  constructor(value: Temporal.PlainDateTime, zone: string | null = null) {
-    this.value = value;
+  constructor(value: Temporal.PlainDateTime, zone: string | null = null, yearOffset = 0) {
+    [ this.value, this.yearOffset ] = rebase(value, yearOffset);
     this.zone = zone;
-    this.iso = this.value.toString() + (this.zone === null ? '' : zoneSuffix(this.zone));
+
+    const wallClock = this.yearOffset === 0 && isFourDigitYear(this.value.year)
+      ? this.value.toString()
+      : formatDate(this.value, this.yearOffset) + 'T' + this.value.toPlainTime().toString();
+
+    this.iso = wallClock + (this.zone === null ? '' : zoneSuffix(this.zone));
 
     // the raw Temporal value is an implementation detail; keep it
     // non-enumerable so structural equality and serialization rely on
     // the canonical `iso` string rather than the underlying value
     Object.defineProperty(this, 'value', { enumerable: false });
+    Object.defineProperty(this, 'yearOffset', { enumerable: false });
   }
 
-  get year() { return this.value.year; }
+  get year() { return this.value.year + this.yearOffset; }
   get month() { return this.value.month; }
   get day() { return this.value.day; }
   get hour() { return this.value.hour; }
@@ -189,6 +313,8 @@ export class FeelDateTime {
    *
    * Escape hatch for consumers that need the raw temporal value. Zone
    * information is available via {@link timezone} / {@link 'time offset'}.
+   * For a date time beyond the range Temporal supports this is a proxy,
+   * see {@link yearOffset}.
    */
   unwrap() : Temporal.PlainDateTime {
     return this.value;
@@ -432,8 +558,8 @@ function fixedOffsetSeconds(zone: string) : number | null {
 
 /**
  * Whether a zone identifier is usable: a known (IANA) zone or a fixed
- * offset within ±24h. Sub-minute offset zones are validated by range,
- * as Temporal rejects them.
+ * offset within ±18:00. Fixed offsets are validated by range, as
+ * Temporal accepts offsets up to ±24h but rejects sub-minute ones.
  */
 const zoneValidity = new Set<string>();
 
@@ -443,10 +569,13 @@ function isValidZone(zone: string | null) : boolean {
     return true;
   }
 
-  const offsetSeconds = offsetZoneSeconds(zone);
+  const offsetMatch = FIXED_OFFSET_PATTERN.exec(zone);
 
-  if (offsetSeconds !== null) {
-    return Math.abs(offsetSeconds) < 24 * 3600;
+  if (offsetMatch) {
+    const [ , , , minutes, seconds = '0' ] = offsetMatch;
+
+    return Number(minutes) < 60 && Number(seconds) < 60 &&
+      Math.abs(fixedOffsetSeconds(zone)) <= MAX_OFFSET_SECONDS;
   }
 
   // cache positive results only: the set of valid zones is bounded in
@@ -534,12 +663,29 @@ function zoneOffset(temporal: FeelTime | FeelDateTime) : FeelDuration {
 // comparison ////////////////////////////////////////////////////////
 
 /**
- * Convert a temporal value to a comparable number of milliseconds.
+ * Convert a temporal value to a comparable number of milliseconds
+ * (a `bigint` for instants beyond the range of safe integers).
  *
  * Wall-clock (zone-less) values are anchored to UTC so they compare
  * consistently among themselves.
  */
-export function toComparable(value) : number | null {
+export function toComparable(value) : number | bigint | null {
+
+  // a value beyond the Temporal range compares as its proxy, shifted by
+  // the skipped Gregorian cycles; beyond the range of safe integers, the
+  // milliseconds are a `bigint` (equal instants always yield the same
+  // type, and numbers and bigints order correctly)
+  if ((isDate(value) || isDateTime(value)) && value.yearOffset !== 0) {
+
+    const proxyMilliseconds = toComparable(withYearOffset(value, -value.yearOffset)) as number;
+
+    const milliseconds = BigInt(proxyMilliseconds) +
+      BigInt(value.yearOffset / CYCLE_YEARS) * BigInt(CYCLE_DAYS * MS_PER_DAY);
+
+    return milliseconds >= MIN_SAFE_MILLISECONDS && milliseconds <= MAX_SAFE_MILLISECONDS
+      ? Number(milliseconds)
+      : milliseconds;
+  }
 
   if (isDate(value)) {
     return value.value.toZonedDateTime('UTC').epochMilliseconds;
@@ -569,7 +715,7 @@ export function toComparable(value) : number | null {
   }
 
   if (isDuration(value)) {
-    return value.value.total({ unit: 'millisecond', relativeTo: REFERENCE_DATE });
+    return durationTotal(value.value, 'millisecond');
   }
 
   return null;
@@ -584,11 +730,82 @@ export function toComparable(value) : number | null {
  */
 function normalize(d: Temporal.Duration) : Temporal.Duration {
 
-  if (d.years !== 0 || d.months !== 0) {
-    return d.round({ largestUnit: 'year', relativeTo: REFERENCE_DATE });
+  // pure years and months / days and time durations balance without an
+  // anchor date, supporting values beyond the range of the anchor
+  // (e.g. `P999999999M`)
+  if (d.years === 0 && d.months === 0) {
+    return d.weeks === 0
+      ? d.round({ largestUnit: 'day' })
+      : d.round({ largestUnit: 'day', relativeTo: REFERENCE_DATE });
   }
 
-  return d.round({ largestUnit: 'day', relativeTo: REFERENCE_DATE });
+  if (d.weeks === 0 && !hasDayTimeComponent(d)) {
+    return yearsMonthsDuration(d.years * 12 + d.months);
+  }
+
+  return d.round({ largestUnit: 'year', relativeTo: REFERENCE_DATE });
+}
+
+/**
+ * A normalized years and months duration spanning the given months.
+ */
+function yearsMonthsDuration(months: number) : Temporal.Duration {
+  return Temporal.Duration.from({
+    years: Math.trunc(months / 12),
+    months: months % 12
+  });
+}
+
+/**
+ * Whether a duration carries a days or time component.
+ */
+function hasDayTimeComponent(d: Temporal.Duration) : boolean {
+  const { days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds } = d;
+
+  return !!(days || hours || minutes || seconds || milliseconds || microseconds || nanoseconds);
+}
+
+/**
+ * The length of a Gregorian cycle ({@link CYCLE_YEARS}) in the given unit.
+ */
+const CYCLE_TOTALS = {
+  year: CYCLE_YEARS,
+  month: CYCLE_MONTHS,
+  week: CYCLE_DAYS / 7,
+  day: CYCLE_DAYS,
+  hour: CYCLE_DAYS * 24,
+  minute: CYCLE_DAYS * 1440,
+  second: CYCLE_DAYS * 86_400,
+  millisecond: CYCLE_DAYS * MS_PER_DAY,
+  microsecond: CYCLE_DAYS * MS_PER_DAY * 1e3,
+  nanosecond: CYCLE_DAYS * MS_PER_DAY * 1e6
+};
+
+/**
+ * The total of a duration in the given unit, relative to
+ * {@link REFERENCE_DATE}.
+ *
+ * Whole Gregorian cycles contained in the duration are accounted for by
+ * their fixed length, so that durations beyond the range of the anchor
+ * date (e.g. `P99999999Y`) can be totaled, too.
+ */
+function durationTotal(d: Temporal.Duration, unit: keyof typeof CYCLE_TOTALS) : number {
+
+  const months = d.years * 12 + d.months;
+
+  const cycles = Math.trunc(months / CYCLE_MONTHS) + Math.trunc(d.days / CYCLE_DAYS);
+
+  if (cycles === 0) {
+    return d.total({ unit, relativeTo: REFERENCE_DATE });
+  }
+
+  const rest = d.with({
+    years: 0,
+    months: months % CYCLE_MONTHS,
+    days: d.days % CYCLE_DAYS
+  });
+
+  return rest.total({ unit, relativeTo: REFERENCE_DATE }) + cycles * CYCLE_TOTALS[unit];
 }
 
 /**
@@ -618,7 +835,7 @@ function isYearsMonthsString(str: string) : boolean {
  */
 export function durationEquals(a: FeelDuration, b: FeelDuration) : boolean {
 
-  const total = (d: FeelDuration, unit) => d.value.total({ unit, relativeTo: REFERENCE_DATE });
+  const total = (d: FeelDuration, unit) => durationTotal(d.value, unit);
 
   // years and months duration -> compare in months
   if (Math.abs(total(a, 'day')) > 180) {
@@ -632,7 +849,7 @@ export function durationEquals(a: FeelDuration, b: FeelDuration) : boolean {
 // the FEEL duration grammar: `P[nY][nM][nD][T[nH][nM][nS]]` with at least
 // one component; notably the ISO-8601 week designator (`W`) is not part
 // of it (see #105)
-const DURATION_PATTERN = /^-?P(?=\d|T\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$/;
+const DURATION_PATTERN = /^-?P(?=\d|T\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d*)?S)?)?$/;
 
 export function duration(opts: string | number) : FeelDuration | null {
 
@@ -645,7 +862,11 @@ export function duration(opts: string | number) : FeelDuration | null {
   }
 
   try {
-    return new FeelDuration(Temporal.Duration.from(opts), isYearsMonthsString(opts));
+
+    // Temporal requires digits after a decimal point (`PT0.S`)
+    const iso = opts.replace(/\.S$/, 'S');
+
+    return new FeelDuration(Temporal.Duration.from(iso), isYearsMonthsString(opts));
   } catch {
     return null;
   }
@@ -677,7 +898,11 @@ function hasTimeComponent(d: FeelDuration) : boolean {
  * A local <date> combined with a time-bearing duration is promoted to a
  * UTC <date and time> (bare dates are anchored in UTC).
  */
-export function addDuration(temporal: FeelTemporal, dur: FeelDuration, sign: number) : FeelTemporal {
+export function addDuration(temporal: FeelTemporal, dur: FeelDuration, sign: number) : FeelTemporal | null {
+
+  if (!isTime(temporal) && needsExtendedArithmetic(temporal, dur)) {
+    return addDurationExtended(temporal, dur, sign);
+  }
 
   const d = sign < 0 ? dur.value.negated() : dur.value;
 
@@ -716,7 +941,11 @@ export function addDuration(temporal: FeelTemporal, dur: FeelDuration, sign: num
 /**
  * Subtract two temporal instants, yielding a {@link FeelDuration}.
  */
-export function subtractTemporals(a: FeelTemporal, b: FeelTemporal) : FeelDuration {
+export function subtractTemporals(a: FeelTemporal, b: FeelTemporal) : FeelDuration | null {
+
+  if (yearOffsetOf(a) !== 0 || yearOffsetOf(b) !== 0) {
+    return subtractTemporalsExtended(a, b);
+  }
 
   if (isTime(a) && isTime(b)) {
     return new FeelDuration(a.value.since(b.value));
@@ -744,27 +973,155 @@ export function addDurations(a: FeelDuration, b: FeelDuration, sign: number) : F
 
   const other = sign < 0 ? b.value.negated() : b.value;
 
-  if (a.yearsMonths) {
+  try {
 
-    // years / months balance calendar-independently (12 months = 1 year),
-    // but Temporal requires an anchor to add year / month durations
-    const anchor = REFERENCE_DATE.toPlainDateTime();
+    if (a.yearsMonths) {
 
-    const result = anchor.add(a.value).add(other).since(anchor, { largestUnit: 'year' });
+      // years / months balance calendar-independently (12 months = 1 year)
+      const months = (a.value.years + other.years) * 12 + a.value.months + other.months;
 
-    return new FeelDuration(result, true);
+      return new FeelDuration(yearsMonthsDuration(months), true);
+    }
+
+    // days / time add directly; days stay 24h units (no calendar balancing,
+    // so P20D + P20D is P40D rather than P1M9D)
+    return new FeelDuration(a.value.add(other), false);
+  } catch {
+
+    // beyond the range of a duration
+    return null;
   }
-
-  // days / time add directly; days stay 24h units (no calendar balancing,
-  // so P20D + P20D is P40D rather than P1M9D)
-  return new FeelDuration(a.value.add(other), false);
 }
 
 /**
- * The <years and months duration> between two dates.
+ * The <years and months duration> between two dates, counting whole
+ * months only.
  */
 export function yearsAndMonthsDuration(from: FeelDate, to: FeelDate) : FeelDuration {
-  return new FeelDuration(from.value.until(to.value, { largestUnit: 'month' }), true);
+
+  let months = (to.year - from.year) * 12 + (to.month - from.month);
+
+  // the last month is incomplete
+  if (months > 0 && from.day > to.day) {
+    months--;
+  } else if (months < 0 && from.day < to.day) {
+    months++;
+  }
+
+  return new FeelDuration(yearsMonthsDuration(months), true);
+}
+
+
+// extended range arithmetic /////////////////////////////////////////
+
+/**
+ * The year offset of a temporal instant (`0` for a <time>).
+ */
+function yearOffsetOf(temporal: FeelTemporal) : number {
+  return isTime(temporal) ? 0 : temporal.yearOffset;
+}
+
+/**
+ * Shift a date or date time by a number of years that is a multiple of
+ * {@link CYCLE_YEARS}, returning `null` beyond the FEEL year range.
+ */
+function withYearOffset<T extends FeelDate | FeelDateTime>(temporal: T, years: number) : T | null {
+
+  if (Math.abs(temporal.year + years) > MAX_FEEL_YEAR) {
+    return null;
+  }
+
+  const yearOffset = temporal.yearOffset + years;
+
+  return (isDate(temporal)
+    ? new FeelDate(temporal.value, yearOffset)
+    : new FeelDateTime(temporal.value, temporal.zone, yearOffset)
+  ) as T;
+}
+
+/**
+ * Whether adding a duration to a date or date time may leave the range
+ * Temporal supports, i.e. needs to happen on a proxy.
+ */
+function needsExtendedArithmetic(temporal: FeelDate | FeelDateTime, dur: FeelDuration) : boolean {
+
+  const { years, months, days } = dur.value;
+
+  return (
+    temporal.yearOffset !== 0 ||
+    Math.abs(temporal.value.year) > MAX_ARITHMETIC_YEAR ||
+    Math.abs(years * 12 + months) >= CYCLE_MONTHS ||
+    Math.abs(days) >= CYCLE_DAYS
+  );
+}
+
+/**
+ * Add a duration to a date or date time beyond the range Temporal
+ * supports: whole Gregorian cycles of the duration shift the year
+ * offset, the remainder applies to a proxy in `[2000, 2400)`.
+ */
+function addDurationExtended(temporal: FeelDate | FeelDateTime, dur: FeelDuration, sign: number) : FeelTemporal | null {
+
+  const d = dur.value;
+
+  const months = d.years * 12 + d.months;
+
+  const cycles = Math.trunc(months / CYCLE_MONTHS) + Math.trunc(d.days / CYCLE_DAYS);
+
+  const rest = new FeelDuration(d.with({
+    years: 0,
+    months: months % CYCLE_MONTHS,
+    days: d.days % CYCLE_DAYS
+  }), dur.yearsMonths);
+
+  const offset = cycleOffset(temporal.year);
+
+  try {
+    const proxy = withYearOffset(temporal, -offset);
+
+    const result = addDuration(proxy, rest, sign);
+
+    if (result === null || isTime(result)) {
+      return result;
+    }
+
+    return withYearOffset(result, offset + sign * cycles * CYCLE_YEARS);
+  } catch {
+
+    // beyond the range of Temporal
+    return null;
+  }
+}
+
+/**
+ * Subtract two temporal instants of which at least one is beyond the
+ * range Temporal supports: subtract the proxies, then account for the
+ * Gregorian cycles in between.
+ */
+function subtractTemporalsExtended(a: FeelTemporal, b: FeelTemporal) : FeelDuration | null {
+
+  const aOffset = yearOffsetOf(a);
+  const bOffset = yearOffsetOf(b);
+
+  const proxy = (temporal: FeelTemporal, offset: number) => (
+    isTime(temporal) ? temporal : withYearOffset(temporal, -offset)
+  );
+
+  const result = subtractTemporals(proxy(a, aOffset), proxy(b, bOffset));
+
+  if (result === null) {
+    return null;
+  }
+
+  try {
+    const days = (aOffset - bOffset) / CYCLE_YEARS * CYCLE_DAYS;
+
+    return new FeelDuration(result.value.add({ days }), result.yearsMonths);
+  } catch {
+
+    // beyond the range of a duration
+    return null;
+  }
 }
 
 
@@ -788,7 +1145,7 @@ function toPlainDateTime(temporal: FeelTemporal) : Temporal.PlainDateTime {
  * Extract the calendar date of a date time.
  */
 export function dateOf(dateTime: FeelDateTime) : FeelDate {
-  return new FeelDate(dateTime.value.toPlainDate());
+  return new FeelDate(dateTime.value.toPlainDate(), dateTime.yearOffset);
 }
 
 /**
@@ -813,7 +1170,7 @@ export function combine(date: FeelDate | FeelDateTime, time: FeelTime) : FeelDat
 
   const datePart = isDate(date) ? date.value : date.value.toPlainDate();
 
-  return new FeelDateTime(datePart.toPlainDateTime(time.value), time.zone);
+  return new FeelDateTime(datePart.toPlainDateTime(time.value), time.zone, date.yearOffset);
 }
 
 
@@ -824,8 +1181,17 @@ export function combine(date: FeelDate | FeelDateTime, time: FeelTime) : FeelDat
  * invalid input.
  */
 export function dateFrom(year: number, month: number, day: number) : FeelDate | null {
+
+  const feelYear = Math.trunc(year);
+
+  if (!(Math.abs(feelYear) <= MAX_FEEL_YEAR)) {
+    return null;
+  }
+
+  const { year: proxyYear, offset } = splitYear(feelYear);
+
   try {
-    return new FeelDate(Temporal.PlainDate.from({ year, month, day }, { overflow: 'reject' }));
+    return new FeelDate(Temporal.PlainDate.from({ year: proxyYear, month, day }, { overflow: 'reject' }), offset);
   } catch {
     return null;
   }
@@ -840,26 +1206,29 @@ export function dateFrom(year: number, month: number, day: number) : FeelDate | 
  */
 export function timeFrom(hour: number, minute: number, second: number, offset: FeelDuration | null = null) : FeelTime | null {
   try {
-    const value = Temporal.PlainTime.from({ hour, minute, second }, { overflow: 'reject' });
+
+    // retain fractional seconds (up to nanosecond precision)
+    let wholeSecond = Math.floor(second);
+    let fraction = Math.round((second - wholeSecond) * 1e9);
+
+    if (fraction === 1e9) {
+      wholeSecond++;
+      fraction = 0;
+    }
+
+    const value = Temporal.PlainTime.from({
+      hour,
+      minute,
+      second: wholeSecond,
+      millisecond: Math.trunc(fraction / 1e6),
+      microsecond: Math.trunc(fraction / 1e3) % 1000,
+      nanosecond: fraction % 1000
+    }, { overflow: 'reject' });
 
     const zone = offset ? offsetZone(offset) : null;
 
-    if (zone !== null) {
-
-      const offsetSeconds = offsetZoneSeconds(zone);
-
-      if (offsetSeconds !== null) {
-
-        // sub-minute offset: validate the range manually, as Temporal
-        // rejects offset zones with second precision
-        if (Math.abs(offsetSeconds) >= 24 * 3600) {
-          return null;
-        }
-      } else {
-
-        // validate the offset (throws for an out-of-range offset)
-        REFERENCE_DATE.toZonedDateTime({ plainTime: value, timeZone: zone });
-      }
+    if (!isValidZone(zone)) {
+      return null;
     }
 
     return new FeelTime(value, zone);
@@ -895,19 +1264,67 @@ function offsetZone(offset: FeelDuration) : string {
 
 // parsing ///////////////////////////////////////////////////////////
 
+// the FEEL date grammar: a year of four to nine digits (no leading zeros
+// beyond four digits), optionally negative, a month and a day
+const DATE_PATTERN = /^(-?)(\d{4,9})-(\d{2})-(\d{2})$/;
+
+// `24:00:00` denotes the end of a day (i.e. the start of the next day)
+const END_OF_DAY_PATTERN = /^24:00:00(?:\.0+)?$/;
+
+// characters that mark a zone designator (or annotation) left in the
+// time part once the zone has been split off, e.g. in
+// `10:00:00+01:00@Europe/Paris` or `10:00:00+05`
+const ZONE_DESIGNATOR_PATTERN = /[+\-zZ[\]@]/;
+
 /**
- * Parse a FEEL <date> string (`2020-01-01`).
+ * Parse a FEEL <date> string (`2020-01-01`, `-2017-12-31`,
+ * `999999999-12-31`).
  *
  * Returns `null` if the input is not a valid date.
  */
 export function parseDate(str: string) : FeelDate | null {
 
-  if (str.startsWith('-')) {
-    throw notImplemented('negative date');
+  const match = DATE_PATTERN.exec(str);
+
+  if (!match) {
+    return null;
+  }
+
+  const [ , sign, year, month, day ] = match;
+
+  if (year.length > 4 && year.startsWith('0')) {
+    return null;
+  }
+
+  return dateFrom((sign ? -1 : 1) * Number(year), Number(month), Number(day));
+}
+
+/**
+ * Parse the time of day of a FEEL <time> string, with the zone split off.
+ *
+ * Returns whether the time denotes the end of a day (`24:00:00`, which
+ * yields midnight), or `null` if the input is not a valid time.
+ */
+function parseTimeOfDay(str: string) : { value: Temporal.PlainTime, endOfDay: boolean } | null {
+
+  // FEEL does not recognize leap seconds; a zone designator left after
+  // splitting off the zone is either a second zone or malformed
+  if (LEAP_SECOND_PATTERN.test(str) || ZONE_DESIGNATOR_PATTERN.test(str)) {
+    return null;
+  }
+
+  if (END_OF_DAY_PATTERN.test(str)) {
+    return {
+      value: new Temporal.PlainTime(),
+      endOfDay: true
+    };
   }
 
   try {
-    return new FeelDate(Temporal.PlainDate.from(str));
+    return {
+      value: Temporal.PlainTime.from(str),
+      endOfDay: false
+    };
   } catch {
     return null;
   }
@@ -921,21 +1338,13 @@ export function parseTime(str: string) : FeelTime | null {
 
   const { value, zone } = splitZone(str);
 
-  // FEEL does not recognize leap seconds
-  if (LEAP_SECOND_PATTERN.test(value)) {
+  const time = parseTimeOfDay(value);
+
+  if (!time || !isValidZone(zone)) {
     return null;
   }
 
-  try {
-
-    if (!isValidZone(zone)) {
-      return null;
-    }
-
-    return new FeelTime(Temporal.PlainTime.from(value), zone);
-  } catch {
-    return null;
-  }
+  return new FeelTime(time.value, zone);
 }
 
 /**
@@ -944,28 +1353,40 @@ export function parseTime(str: string) : FeelTime | null {
  */
 export function parseDateTime(str: string) : FeelDateTime | null {
 
-  if (str.startsWith('-')) {
-    throw notImplemented('negative date');
-  }
+  const separatorIndex = str.indexOf('T');
 
-  const { value: parsedValue, zone } = splitZone(str);
+  // a date only denotes the start of the day
+  if (separatorIndex === -1) {
+    const { value, zone } = splitZone(str);
 
-  let value = parsedValue;
+    const date = parseDate(value);
 
-  if (!value.includes('T')) {
-    value = `${value}T00:00:00`;
-  }
-
-  try {
-
-    if (!isValidZone(zone)) {
+    if (!date || !isValidZone(zone)) {
       return null;
     }
 
-    return new FeelDateTime(Temporal.PlainDateTime.from(value), zone);
-  } catch {
+    return new FeelDateTime(date.value.toPlainDateTime(), zone, date.yearOffset);
+  }
+
+  const date = parseDate(str.substring(0, separatorIndex));
+
+  const { value, zone } = splitZone(str.substring(separatorIndex + 1));
+
+  const time = parseTimeOfDay(value);
+
+  if (!date || !time || !isValidZone(zone)) {
     return null;
   }
+
+  let wallClock = date.value.toPlainDateTime(time.value);
+
+  if (time.endOfDay) {
+    wallClock = wallClock.add({ days: 1 });
+  }
+
+  const dateTime = new FeelDateTime(wallClock, zone, date.yearOffset);
+
+  return Math.abs(dateTime.year) > MAX_FEEL_YEAR ? null : dateTime;
 }
 
 
