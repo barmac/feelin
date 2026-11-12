@@ -27,9 +27,10 @@ import {
 import {
   getFromContext,
   has,
-  isNotImplemented,
   notImplemented
 } from './utils.js';
+
+import * as regex from './regex.js';
 
 import {
   duration,
@@ -437,15 +438,9 @@ const builtins = {
   }, [ 'string', 'string' ], [ 'string', 'match' ]),
 
   'replace': fn(function(input, pattern, replacement, flags) {
-    const regexp = createRegexp(pattern, flags || '', 'g');
-
-    if (!regexp) {
-      return invalidArguments('replace(input, pattern, replacement) expects a valid pattern, got {pattern}', {
-        pattern
-      });
-    }
-
-    return input.replace(regexp, replacement.replace(/\$0/g, '$$&'));
+    return withRegex('replace(input, pattern, replacement)', () => {
+      return regex.replace(input, pattern, replacement, flags || '');
+    });
   }, [ 'string', 'string', 'string', 'string?' ], [ 'input', 'pattern', 'replacement', 'flags' ]),
 
   'contains': fn(function(string, match) {
@@ -453,15 +448,9 @@ const builtins = {
   }, [ 'string', 'string' ], [ 'string', 'match' ]),
 
   'matches': fn(function(input, pattern, flags) {
-    const regexp = createRegexp(pattern, flags || '', '');
-
-    if (!regexp) {
-      return invalidArguments('matches(input, pattern) expects a valid pattern, got {pattern}', {
-        pattern
-      });
-    }
-
-    return regexp.test(input);
+    return withRegex('matches(input, pattern)', () => {
+      return regex.matches(input, pattern, flags || '');
+    });
   }, [ 'string', 'string', 'string?' ], [ 'input', 'pattern', 'flags' ]),
 
   'starts with': fn(function(string, match) {
@@ -473,15 +462,9 @@ const builtins = {
   }, [ 'string', 'string' ], [ 'string', 'match' ]),
 
   'split': fn(function(string, delimiter) {
-    const regexp = createRegexp(delimiter, '', '');
-
-    if (!regexp) {
-      return invalidArguments('split(string, delimiter) expects a valid pattern, got {delimiter}', {
-        delimiter
-      });
-    }
-
-    return string.split(regexp);
+    return withRegex('split(string, delimiter)', () => {
+      return regex.split(string, delimiter);
+    });
   }, [ 'string', 'string' ], [ 'string', 'delimiter' ]),
 
   'string join': fn(function(list, delimiter) {
@@ -1075,10 +1058,6 @@ const TIME_START_PATTERN = /^\d{1,2}:\d{1,2}:\d{1,2}/;
 
 const NON_WORD_PATTERN = /\W/;
 
-const SUPPORTED_FLAGS_PATTERN = /[smix]/g;
-
-const EXTENDED_FLAG_PATTERN = /x/;
-
 function createArgTester(arg) {
   const optional = arg.endsWith('?');
 
@@ -1507,38 +1486,18 @@ const MONTH_NAMES = [
 ];
 
 /**
- * Concatenates flags for a regular expression.
- *
- * Ensures that default flags are included without duplication, even if
- * user-specified flags overlap with the defaults.
+ * Run a regular expression operation, returning an {@link invalidArguments}
+ * signal for an invalid pattern, flags or replacement string.
  */
-export function buildFlags(flags: string, defaultFlags: string) {
-
-  const unsupportedFlags = flags.replace(SUPPORTED_FLAGS_PATTERN, '');
-
-  if (unsupportedFlags) {
-    throw new Error('illegal flags: ' + unsupportedFlags);
-  }
-
-  // we don't implement the <x> flag
-  if (EXTENDED_FLAG_PATTERN.test(flags)) {
-    throw notImplemented('matches <x> flag');
-  }
-
-  return flags + defaultFlags;
-}
-
-/**
- * Creates a regular expression from a given pattern
- */
-function createRegexp(pattern: string, flags: string, defaultFlags: string = '') : RegExp | null {
+function withRegex<T>(signature: string, operation: () => T) {
   try {
-    return new RegExp(pattern, 'u' + buildFlags(flags, defaultFlags));
-  } catch (_err) {
-    if (isNotImplemented(_err)) {
-      throw _err;
-    }
-  }
+    return operation();
+  } catch (err) {
 
-  return null;
+    if (err instanceof regex.RegexError) {
+      return invalidArguments(`${ signature } ${ err.message }`, err.values);
+    }
+
+    throw err;
+  }
 }

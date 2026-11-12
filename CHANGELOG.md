@@ -6,6 +6,12 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FEAT`: support XML Schema / XPath regular expressions in `matches`, `replace` and `split`, including the `x` and `q` flags, Unicode block escapes (`\p{IsBasicLatin}`) and character class subtraction (`[A-Z-[OI]]`)
+* `FIX`: give `\d`, `\w`, `\s`, `\i`, `\c` and `.` their XML Schema meaning in regular expressions
+* `FIX`: support XPath replacement strings (`$N`, `\$`, `\\`) in `replace`
+* `FIX`: warn `INVALID_ARGUMENTS` on invalid regular expression escapes, flags, replacement strings and `replace` patterns matching the empty string, instead of throwing
+* `FIX`: do not include captured groups in `split` results
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))
