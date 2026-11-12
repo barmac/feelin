@@ -456,6 +456,17 @@ function describeBuiltins(name, evaluate) {
       expr('decimal(-0.515, 2)', -0.52);
       expr('decimal(1.5, null)', null);
       expr('decimal(null, 2)', null);
+      expr('decimal(1/3, 2.5)', .33);
+      expr('decimal(1/3, -2.5)', 0);
+      expr('decimal(1.5, 6176)', 1.5);
+      expr('decimal(1.5, 6177)', null);
+      expr('decimal(1.5, -6111)', 0);
+      expr('decimal(1.5, -6112)', null);
+      expr('decimal(1.15, 1)', 1.2);
+      expr('decimal(1.25, 1)', 1.2);
+      expr('decimal(2.675, 2)', 2.68);
+      expr('decimal(1250, -2)', 1200);
+      expr('decimal(1350, -2)', 1400);
 
       expr('floor(1.5)', 1);
       expr('floor(-1.5)', -2);
@@ -463,6 +474,14 @@ function describeBuiltins(name, evaluate) {
       expr('floor(-1.56, 1)',-1.6);
       expr('floor(1.56, null)', null);
       expr('floor(1.56, "1")', null);
+      expr('floor(1.56, 1.5)', null);
+      expr('floor(1.56, 6177)', null);
+      expr('floor(1.56, -6112)', null);
+      expr('floor(1.56, 6176)', 1.56);
+      expr('floor(1.56, -6111)', 0);
+      expr('floor(1234.5, -2)', 1200);
+      expr('floor(4.35, 2)', 4.35);
+      expr('floor(-0.07, 2)', -0.07);
 
       expr('ceiling(1.5)', 2);
       expr('ceiling(-1.5)', -1);
@@ -470,6 +489,14 @@ function describeBuiltins(name, evaluate) {
       expr('ceiling(-1.56, 1)', -1.5);
       expr('ceiling(1.56, null)', null);
       expr('ceiling(1.56, "1")', null);
+      expr('ceiling(1.56, 1.5)', null);
+      expr('ceiling(1.56, 6177)', null);
+      expr('ceiling(1.56, -6112)', null);
+      expr('ceiling(1.56, 6176)', 1.56);
+      expr('ceiling(-1.56, -6111)', 0);
+      expr('ceiling(1234.5, -2)', 1300);
+      expr('ceiling(0.07, 2)', 0.07);
+      expr('ceiling(-4.35, 2)', -4.35);
 
       expr('round up(5.5, 0)', 6);
       expr('round up(-5.5, 0)', -6);
@@ -479,6 +506,14 @@ function describeBuiltins(name, evaluate) {
       expr('round up(-1.000000000000126, 14)', -1.00000000000013);
       expr('round up(null, 2)', null);
       expr('round up(1.121, null)', null);
+      expr('round up(5.5, 1.1)', null);
+      expr('round up(5.5, 6177)', null);
+      expr('round up(5.5, -6112)', null);
+      expr('round up(5.5, 6176)', 5.5);
+      expr('round up(5.5, -6111)', 5.5);
+      expr('round up(0.07, 2)', 0.07);
+      expr('round up(1234.5, -2)', 1300);
+      expr('round up(5.5, -300)', 1e300);
 
       expr('round down(5.5, 0)', 5);
       expr('round down(-5.5, 0)', -5);
@@ -488,6 +523,13 @@ function describeBuiltins(name, evaluate) {
       expr('round down(-1.000000000000126, 14)', -1.00000000000012);
       expr('round down(null, 2)', null);
       expr('round down(1.121, null)', null);
+      expr('round down(5.5, 1.1)', null);
+      expr('round down(5.5, 6177)', null);
+      expr('round down(5.5, -6112)', null);
+      expr('round down(5.5, 6176)', 5.5);
+      expr('round down(5.5, -6111)', 0);
+      expr('round down(4.35, 2)', 4.35);
+      expr('round down(-1234.5, -2)', -1200);
 
       expr('round half up(5.5, 0)', 6);
       expr('round half up(-5.5, 0)', -6);
@@ -498,6 +540,13 @@ function describeBuiltins(name, evaluate) {
       expr('round half up(null, 2)', null);
       expr('round half up(1.121, null)', null);
       expr('round half up(5.5, 6176)', 5.5);
+      expr('round half up(5.5, 1.1)', null);
+      expr('round half up(5.5, 6177)', null);
+      expr('round half up(5.5, -6112)', null);
+      expr('round half up(5.5, -6111)', 0);
+      expr('round half up(1.005, 2)', 1.01);
+      expr('round half up(-1.005, 2)', -1.01);
+      expr('round half up(1250, -2)', 1300);
 
       expr('round half down(5.5, 0)', 5);
       expr('round half down(-5.5, 0)', -5);
@@ -508,6 +557,14 @@ function describeBuiltins(name, evaluate) {
       expr('round half down(null, 2)', null);
       expr('round half down(1.121, null)', null);
       expr('round half down(5.5, 6176)', 5.5);
+      expr('round half down(5.5, 1.1)', null);
+      expr('round half down(5.5, 6177)', null);
+      expr('round half down(5.5, -6112)', null);
+      expr('round half down(5.5, -6111)', 0);
+      expr('round half down(1.005, 2)', 1);
+      expr('round half down(1.0051, 2)', 1.01);
+      expr('round half down(-1.005, 2)', -1);
+      expr('round half down(1250, -2)', 1200);
 
       expr('abs( 10 )', 10);
       expr('abs(-1)', 1);

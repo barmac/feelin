@@ -732,29 +732,19 @@ const builtins = {
   // 10.3.4.5 Numeric functions
   'decimal': fn(function(n, scale) {
     if (n === null || scale === null) return null;
-    return offsetted(bankersRound, n, scale);
+
+    // a fractional scale is truncated to an integer
+    return roundWithScale('decimal', n, Math.trunc(scale), 'HALF_EVEN');
   }, [ 'number', 'number' ], [ 'n', 'scale' ]),
 
   'floor': fn(function(n, scale = 0) {
-
-    if (scale === null) {
-      return null;
-    }
-
-    const adjust = 10 ** scale;
-
-    return Math.floor(n * adjust) / adjust;
+    if (n === null || scale === null) return null;
+    return roundWithScale('floor', n, scale, 'FLOOR');
   }, [ 'number', 'number?' ], [ 'n', 'scale' ]),
 
   'ceiling': fn(function(n, scale = 0) {
-
-    if (scale === null) {
-      return null;
-    }
-
-    const adjust = 10 ** scale;
-
-    return Math.ceil(n * adjust) / adjust;
+    if (n === null || scale === null) return null;
+    return roundWithScale('ceiling', n, scale, 'CEILING');
   }, [ 'number', 'number?' ], [ 'n', 'scale' ]),
 
   'abs': fn(function(n) {
@@ -778,30 +768,22 @@ const builtins = {
 
   'round up': fn(function(n, scale) {
     if (n === null || scale === null) return null;
-    return n > 0 ? offsetted(Math.ceil, n, scale) : offsetted(Math.floor, n, scale);
+    return roundWithScale('round up', n, scale, 'UP');
   }, [ 'number', 'number' ], [ 'n', 'scale' ]),
 
   'round down': fn(function(n, scale) {
     if (n === null || scale === null) return null;
-    return n > 0 ? offsetted(Math.floor, n, scale) : offsetted(Math.ceil, n, scale);
+    return roundWithScale('round down', n, scale, 'DOWN');
   }, [ 'number', 'number' ], [ 'n', 'scale' ]),
 
   'round half up': fn(function(n, scale) {
     if (n === null || scale === null) return null;
-    const remainder = (n * 10 ** scale) % 1;
-    if (Math.abs(remainder) === 0.5) {
-      return offsetted(n > 0 ? Math.ceil : Math.floor, n, scale);
-    }
-    return offsetted(Math.round, n, scale);
+    return roundWithScale('round half up', n, scale, 'HALF_UP');
   }, [ 'number', 'number' ], [ 'n', 'scale' ]),
 
   'round half down': fn(function(n, scale) {
     if (n === null || scale === null) return null;
-    const remainder = (n * 10 ** scale) % 1;
-    if (Math.abs(remainder) === 0.5) {
-      return offsetted(n > 0 ? Math.floor : Math.ceil, n, scale);
-    }
-    return offsetted(Math.round, n, scale);
+    return roundWithScale('round half down', n, scale, 'HALF_DOWN');
   }, [ 'number', 'number' ], [ 'n', 'scale' ]),
 
   'modulo': fn(function(dividend, divisor) {
@@ -1416,21 +1398,129 @@ function countSymbols(str) {
   return str.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '_').length;
 }
 
-function offsetted(func, n, scale) {
-  const result = func(n * 10 ** scale) / 10 ** scale;
+type RoundingMode = 'UP' | 'DOWN' | 'CEILING' | 'FLOOR' | 'HALF_UP' | 'HALF_DOWN' | 'HALF_EVEN';
 
-  return isNaN(result) ? n : result;
-}
+// scale range of IEEE 754 decimal128, cf. DMN 1.5, 10.3.4.5
+const MIN_SCALE = -6111;
+const MAX_SCALE = 6176;
 
-function bankersRound(n) {
-  const floored = Math.floor(n);
-  const decimalPart = n - floored;
+/**
+ * Round `n` to `scale` digits after the decimal point,
+ * validating the scale first.
+ *
+ * @param {string} name
+ * @param {number} n
+ * @param {number} scale
+ * @param {RoundingMode} mode
+ *
+ * @return {number|InvocationFailure}
+ */
+function roundWithScale(name: string, n: number, scale: number, mode: RoundingMode) {
 
-  if (decimalPart === 0.5) {
-    return (floored % 2 === 0) ? floored : floored + 1;
+  if (!Number.isInteger(scale) || scale < MIN_SCALE || scale > MAX_SCALE) {
+    return invalidArguments(`${name}(n, scale) expects an integer scale in [${MIN_SCALE}..${MAX_SCALE}], got {scale}`, {
+      scale
+    });
   }
 
-  return Math.round(n);
+  return roundToScale(n, scale, mode);
+}
+
+/**
+ * Round `n` to `scale` digits after the decimal point.
+ *
+ * Rounds the shortest decimal representation of `n`
+ * (what `String(n)` yields) rather than its binary
+ * floating point value, so that `1.005` rounds as written.
+ *
+ * Returns `n` unchanged if the rounded result cannot be
+ * represented as a (finite) number.
+ *
+ * @param {number} n
+ * @param {number} scale
+ * @param {RoundingMode} mode
+ *
+ * @return {number}
+ */
+function roundToScale(n: number, scale: number, mode: RoundingMode) {
+
+  if (n === 0) {
+    return 0;
+  }
+
+  if (!Number.isFinite(n)) {
+    return n;
+  }
+
+  const negative = n < 0;
+
+  // n = digits * 10^exponent
+  const [ mantissa, exp = '0' ] = String(Math.abs(n)).split('e');
+  const [ integer, fraction = '' ] = mantissa.split('.');
+
+  const digits = (integer + fraction).replace(/^0+/, '');
+  const exponent = Number(exp) - fraction.length;
+
+  // number of trailing digits to drop
+  const drop = -exponent - scale;
+
+  if (drop <= 0) {
+    return n;
+  }
+
+  const keep = digits.length - drop;
+
+  let kept = keep > 0 ? digits.slice(0, keep) : '0';
+
+  // dropping more digits than there are leaves a
+  // remainder below half of the rounding unit
+  const dropped = keep >= 0 ? digits.slice(keep) : '0' + digits;
+
+  if (/[1-9]/.test(dropped)) {
+
+    // compare remainder to half of the rounding unit
+    const half = dropped[0] > '5' ? 1 : dropped[0] < '5' ? -1 : /[1-9]/.test(dropped.slice(1)) ? 1 : 0;
+
+    const increment = {
+      'UP': true,
+      'DOWN': false,
+      'CEILING': !negative,
+      'FLOOR': negative,
+      'HALF_UP': half >= 0,
+      'HALF_DOWN': half > 0,
+      'HALF_EVEN': half > 0 || (half === 0 && Number(kept[kept.length - 1]) % 2 === 1)
+    }[mode];
+
+    if (increment) {
+      kept = incrementDigits(kept);
+    }
+  }
+
+  const result = Number(`${negative ? '-' : ''}${kept}e${-scale}`);
+
+  if (!Number.isFinite(result)) {
+    return n;
+  }
+
+  return result === 0 ? 0 : result;
+}
+
+/**
+ * Add one to a non-negative integer given as a digit string.
+ *
+ * @param {string} digits
+ *
+ * @return {string}
+ */
+function incrementDigits(digits: string) {
+
+  let i = digits.length - 1;
+
+  while (i >= 0 && digits[i] === '9') {
+    i--;
+  }
+
+  return (i < 0 ? '1' : digits.slice(0, i) + (Number(digits[i]) + 1)) + '0'.repeat(digits.length - i - 1);
 }
 
 // adapted from https://stackoverflow.com/a/53577159

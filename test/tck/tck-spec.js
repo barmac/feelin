@@ -172,15 +172,6 @@ function skipTest(suiteName, testId) {
     '0082-feel-coercion-test-01.xml#decisionService_002_c',
     '0082-feel-coercion-test-01.xml#decision_context_03',
 
-    // we're not Java
-    '1141-feel-round-up-function-test-01.xml#016_b',
-    '1141-feel-round-up-function-test-01.xml#017_b',
-    '1142-feel-round-down-function-test-01.xml#016_b',
-    '1142-feel-round-down-function-test-01.xml#017_b',
-    '1143-feel-round-half-up-function-test-01.xml#016_b',
-    '1143-feel-round-half-up-function-test-01.xml#017_b',
-    '1144-feel-round-half-down-function-test-01.xml#016_b',
-    '1144-feel-round-half-down-function-test-01.xml#017_b',
   ].includes(`${suiteName}#${testId}`);
 }
 
