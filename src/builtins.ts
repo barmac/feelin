@@ -507,15 +507,19 @@ const builtins = {
   // list replace(list, match, newItem)
   'list replace': fn(function(list, position, newItem, match) {
 
-    const matcher = position || match;
+    // position and match are mutually exclusive
+    const matcher = position ?? match;
 
-    if (![ 'number', 'function' ].includes(getType(matcher))) {
+    if (
+      ![ 'number', 'function' ].includes(getType(matcher)) ||
+      position != null && match != null
+    ) {
       return invalidArguments('list replace expects a numeric position or a match function, got {matcher}', {
         matcher
       });
     }
 
-    return listReplace(list, position || match, newItem);
+    return listReplace(list, matcher, newItem);
   }, [ 'list', 'any?', 'any', 'function?' ], [ 'list', 'position', 'newItem', 'match' ]),
 
   'count': fn(function(list) {
@@ -1451,17 +1455,52 @@ function stddev(array) {
 function listReplace(list, matcher, newItem) {
 
   if (isNumber(matcher)) {
-    return [ ...list.slice(0, matcher - 1), newItem, ...list.slice(matcher) ];
+
+    // 1-based, negative positions count from the end;
+    // non-integer positions are truncated
+    const position = Math.trunc(matcher);
+
+    if (position === 0 || Math.abs(position) > list.length) {
+      return invalidArguments('list replace position {position} is out of bounds for {list}', {
+        position: matcher,
+        list
+      });
+    }
+
+    const result = list.slice();
+
+    result[position > 0 ? position - 1 : list.length + position] = newItem;
+
+    return result;
   }
 
-  return list.map((item, _idx) => {
+  // match function must accept exactly (item, newItem)
+  if (matcher.parameterNames.length !== 2) {
+    return invalidArguments('list replace expects a match function with parameters (item, newItem), got {matcher}', {
+      matcher
+    });
+  }
 
-    if (matcher.invoke([ item, newItem ])) {
-      return newItem;
-    } else {
-      return item;
+  const result = [];
+
+  for (const item of list) {
+
+    const matches = matcher.invoke([ item, newItem ]);
+
+    if (isInvocationFailure(matches)) {
+      return matches;
     }
-  });
+
+    if (typeof matches !== 'boolean') {
+      return invalidArguments('list replace expects the match function to return a boolean, got {matches}', {
+        matches
+      });
+    }
+
+    result.push(matches ? newItem : item);
+  }
+
+  return result;
 }
 
 function median(array) {
