@@ -6,6 +6,9 @@ All notable changes to [feelin](https://github.com/nikku/feelin) are documented 
 
 ___Note:__ Yet to be released changes appear here._
 
+* `FIX`: require an integer scale in `[-6111..6176]` in `decimal`, `floor`, `ceiling`, `round up`, `round down`, `round half up` and `round half down`; truncate a fractional `decimal` scale ([#7](https://github.com/barmac/feelin/pull/7))
+* `FIX`: round numbers as written (shortest decimal representation) instead of on their binary floating point value in numeric rounding built-ins ([#7](https://github.com/barmac/feelin/pull/7))
+
 ## 8.2.0
 
 * `PERF`: improve expression evaluation and built-in performance ([#177](https://github.com/nikku/feelin/pull/177))
